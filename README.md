@@ -7,6 +7,7 @@ Stem Cell Reports. 2018 Jan 9;10(1):101-119. doi: 10.1016/j.stemcr.2017.11.012.
 Epub 2017 Dec 14.
 
 Author information: 
+
 	1. Program in Cellular and Molecular Biology, University of Michigan Medical School, Ann Arbor, MI 48109, USA; Department of Internal Medicine, University of Michigan Medical School, Ann Arbor, MI 48109, USA.
     2. Department of Internal Medicine, University of Michigan Medical School, Ann Arbor, MI 48109, USA.
     3. Division of Pulmonary and Critical Care Medicine, University of Michigan Medical School, Ann Arbor, MI 48109, USA.
