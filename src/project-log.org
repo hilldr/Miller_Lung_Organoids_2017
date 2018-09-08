@@ -1,6 +1,5 @@
-#+TITLE: Fetal lung buds and stuff
+#+TITLE: In Vitro Induction and In Vivo Engraftment of Lung Bud Tip Progenitor Cells Derived from Human Pluripotent Stem Cells
 #+DATE:
-* Description
 * Analysis
 ** kallisto processing
 #+begin_src sh :tangle :tangle kallisto-alignment.sh :eval no
@@ -230,18 +229,6 @@ print(plot)
 
 
 * Figure 1 
-** Notes 
-secondary point we want to make is that the conditions we are using to maintain the HLOs maintains their "progenitor-like" character in vitro
-
-We need to make the second point first, in figure 1...so essentially we need to show that the genes enriched in human fetal lung buds are maintained in the human fetal derived HLOs. Here, the PCA does not help our case, because in vitro culture is a major driver of gene expression differences, and does not help us make our case of "similarity", so we will need to do this indirectly - perhaps by first identifying genes enriched in freshly isloated bud-tips, and then by comparing that list to the fetal-organoid genes.
-
-*For Figure 1* - the focus is on the human fetal buds, we should probably set up the story by showing genes enriched in the human fetal buds by doing differential expression for one of the following:
-
-Hi David - Re: "For Figure 1" (a) - Differential expression....i've been looking at the gene expression table you sent us the other day, perhaps the best comparison won't be  "intact distal lung" vs. "lung_buds_0" - it looks like a lot of the highly expressed epithelial genes are also very high in the intact sample...so we will probably lose a lot of important genes.
-
-Honestly, the best comparison looks like it will be "lung_buds_0" vs. "enteroids"....but I don't like trying to justify this approach i.e "we compared intestine to lung"...seems strange to me.
-
-I wonder if a better approach will be to do a k-means clustering to find a gene program that is shared between freshly isolated buds ("lung_buds_0"), and in vitro cultured buds ("lung_buds_14") relative to enteroids? The rationale would be that we "compared human fetal tissues" and found a gene program linked to early fetal lung, and isolated lung buds"
 ** Export counts
 #+begin_src R :session *R* :results silent :exports code :eval yes
 ## export complete dataset with DESeq2
