@@ -1,0 +1,43 @@
+directory,file_name,sample_id,sample_name,sample_name_old,cell_line,tissue_type,media,gestation_d,sex,culture_d,replicate,short_name,code_name
+../results/kallisto-Run_1815,81400_ATGTCA_S1_L007_R1_001.fastq,81400,fetal progenitor organoid,1_HT_83_buds_3F_for_2_weeks_1,HT83,lung_buds,3F,,,14,0,HT83_lung_buds_14_0,lung_buds_d14
+../results/kallisto-Run_1815,81401_CTTGTA_S2_L007_R1_001.fastq,81401,fetal progenitor organoid,2_HT_83_buds_3F_for_2_weeks_2,HT83,lung_buds,3F,,,14,1,HT83_lung_buds_14_1,lung_buds_d14
+../results/kallisto-Run_1815,81402_CCGTCC_S3_L007_R1_001.fastq,81402,fetal progenitor organoid,3_HT_83_buds_3F_for_2_weeks_3,HT83,lung_buds,3F,,,14,2,HT83_lung_buds_14_2,lung_buds_d14
+../results/kallisto-Run_1815,81403_TTAGGC_S4_L007_R1_001.fastq,81403,fetal progenitor organoid,4_HT_82_buds_3F_for_2_weeks_1,HT82,lung_buds,3F,,f,14,0,HT82_lung_buds_14_0,lung_buds_d14
+../results/kallisto-Run_1815,81404_GATCAG_S5_L007_R1_001.fastq,81404,fetal progenitor organoid,5_HT_82_buds_3F_for_2_weeks_2,HT82,lung_buds,3F,,f,14,1,HT82_lung_buds_14_1,lung_buds_d14
+../results/kallisto-Run_1815,81405_ACTGAT_S6_L007_R1_001.fastq,81405,fetal progenitor organoid,6_HT_82_buds_3F_for_2_weeks_3,HT82,lung_buds,3F,,f,14,2,HT82_lung_buds_14_2,lung_buds_d14
+../results/kallisto-Run_1815,81406_ATTCCT_S7_L007_R1_001.fastq,81406,fetal lung,7_HT_83_intact_distal_lung_59_d_female,HT83,intact_distal_lung,,59,f,0,0,HT83_intact_distal_lung_0_0,intact_distal_lung_d0
+../results/kallisto-Run_1815,81407_GGCTAC_S8_L007_R1_001.fastq,81407,fetal lung,8_HT_82_intact_distal_lung_89_d_female,HT82,intact_distal_lung,,89,f,0,0,HT82_intact_distal_lung_0_0,intact_distal_lung_d0
+../results/kallisto-Run_1815,81408_ACTTGA_S9_L007_R1_001.fastq,81408,fetal lung,9_HT_85_intact_distal_lung_125_d_female,HT85,intact_distal_lung,,125,f,0,0,HT85_intact_distal_lung_0_0,intact_distal_lung_d0
+../results/kallisto-Run_1815,81409_CGTACG_S10_L007_R1_001.fastq,81409,patterned lung organoid,10_20-1iPSCtetGFP_HLO_intact_3F_for_52_days_1,20-1iPSCtetGFP,HLO,3F,,,52,0,20-1iPSCtetGFP_HLO_52_0,HLO
+../results/kallisto-Run_1815,81410_AGTTCC_S11_L007_R1_001.fastq,81410,patterned lung organoid,11_20-1iPSCtetGFP_HLO_intact_3F_for_52_days_2,20-1iPSCtetGFP,HLO,3F,,,52,1,20-1iPSCtetGFP_HLO_52_1,HLO
+../results/kallisto-Run_1815,81411_GTTTCG_S12_L007_R1_001.fastq,81411,patterned lung organoid,12_20-1iPSCtetGFP_HLO_intact_3F_for_52_days_3,20-1iPSCtetGFP,HLO,3F,,,52,2,20-1iPSCtetGFP_HLO_52_2,HLO
+../results/kallisto-Run_1815,81412_CGATGT_S13_L007_R1_001.fastq,81412,bud tip organoid,13_H9mCherry_HLOs_cystic_3F_for_97_days_(NP1)_1,H9mCherry,HLO,3F,,f,97,0,H9mCherry_HLO_97_0,HLO
+../results/kallisto-Run_1815,81413_CAGATC_S14_L007_R1_001.fastq,81413,bud tip organoid,14_H9mCherry_HLOs_cystic_3F_for_97_days_(NP1)_2,H9mCherry,HLO,3F,,f,97,1,H9mCherry_HLO_97_1,HLO
+../results/kallisto-Run_1815,81414_GTGAAA_S15_L007_R1_001.fastq,81414,bud tip organoid,15_H9mCherry_HLOs_cystic_3F_for_97_days_(NP1)_3,H9mCherry,HLO,3F,,f,97,2,H9mCherry_HLO_97_2,HLO
+../results/kallisto-Run_1815,81415_TGACCA_S16_L008_R1_001.fastq,81415,bud tip organoid,16_20-1iPSCtetGFP_HLOs_cystic_3F_for_60_days_(NP1)_1,20-1iPSCtetGFP,HLO,3F,,,60,0,20-1iPSCtetGFP_HLO_60_0,HLO
+../results/kallisto-Run_1815,81416_GAGTGG_S17_L008_R1_001.fastq,81416,bud tip organoid,17_20-1iPSCtetGFP_HLOs_cystic_3F_for_60_days_(NP1)_2,20-1iPSCtetGFP,HLO,3F,,,60,1,20-1iPSCtetGFP_HLO_60_1,HLO
+../results/kallisto-Run_1815,81417_ATCACG_S18_L008_R1_001.fastq,81417,bud tip organoid,18_20-1iPSCtetGFP_HLOs_cystic_3F_for_60_days_(NP1)_3,20-1iPSCtetGFP,HLO,3F,,,60,2,20-1iPSCtetGFP_HLO_60_2,HLO
+../results/kallisto-Run_1815,81418_TAGCTT_S19_L008_R1_001.fastq,81418,enteroid,19_HT82_enteroids_duodenum_1,HT82,enteroid,,,f,0,0,HT82_enteroid_0_0,enteroid_d0
+../results/kallisto-Run_1815,81419_GTGGCC_S20_L008_R1_001.fastq,81419,enteroid,20_HT82_enteroids_duodenum_2,HT82,enteroid,,,f,0,1,HT82_enteroid_0_1,enteroid_d0
+../results/kallisto-Run_1815,81420_AGTCAA_S21_L008_R1_001.fastq,81420,enteroid,21_HT82_enteroids_duodenum_3,HT82,enteroid,,,f,0,2,HT82_enteroid_0_2,enteroid_d0
+../results/kallisto-Run_1815,81421_GTCCGC_S22_L008_R1_001.fastq,81421,fetal_lung,22_HT_95_intact_lung_95_d_male,HT95,intact_lung,,95,m,0,0,fetal_lung_7,fetal_lung
+../results/kallisto-Run_1815,81422_ACAGTG_S23_L008_R1_001.fastq,81422,hPSC,23_H9_mCherry_Stem_Cell_1,H9mCherry,stem_cell,,,f,0,0,H9mCherry_stem_cell_0_0,stem_cell_d0
+../results/kallisto-Run_1815,81423_GCCAAT_S24_L008_R1_001.fastq,81423,hPSC,24_H9_mCherry_Stem_Cell_2,H9mCherry,stem_cell,,,f,0,1,H9mCherry_stem_cell_0_1,stem_cell_d0
+../results/kallisto-Run_1815,81424_ATGTCA_S25_L008_R1_001.fastq,81424,hPSC,25_H9_mCherry_Stem_Cell_3,H9mCherry,stem_cell,,,f,0,2,H9mCherry_stem_cell_0_2,stem_cell_d0
+../results/kallisto-Run_1815,81425_CTTGTA_S26_L008_R1_001.fastq,81425,FG spheroid,26_h9_mCherry_FG_spheroids_1,H9mCherry,spheroid,,,f,0,0,H9mCherry_spheroid_0_0,spheroid_d0
+../results/kallisto-Run_1815,81426_CCGTCC_S27_L008_R1_001.fastq,81426,FG spheroid,27_h9_mCherry_FG_spheroids_2,H9mCherry,spheroid,,,f,0,1,H9mCherry_spheroid_0_1,spheroid_d0
+../results/kallisto-Run_1815,81427_TTAGGC_S28_L008_R1_001.fastq,81427,FG spheroid ,28_h9_mCherry_FG_spheroids_3,H9mCherry,spheroid,,,f,0,2,H9mCherry_spheroid_0_2,spheroid_d0
+../results/kallisto-Run_1815,81428_GATCAG_S29_L008_R1_001.fastq,81428,uncultured fetal lung buds ,29_HT82_lung_buds_fresh_1,HT82,lung_buds,,,f,0,0,HT82_lung_buds_0_0,lung_buds_d0
+../results/kallisto-Run_1815,81429_ACTGAT_S30_L008_R1_001.fastq,81429,uncultured fetal lung buds ,30_HT82_lung_buds_fresh_2,HT82,lung_buds,,,f,0,1,HT82_lung_buds_0_1,lung_buds_d0
+../results/kallisto-Run_1815,81430_ATTCCT_S31_L008_R1_001.fastq,81430,uncultured fetal lung buds ,31_HT82_lung_buds_fresh_3,HT82,lung_buds,,,f,0,2,HT82_lung_buds_0_2,lung_buds_d0
+../results/kallisto-adult_lung,Sample_ERR315341_R1.fastq,ERR315341,adult_lung,adult_lung,ERR315341,intact_lung,,,,0,0,adult_lung_0,adult_lung
+../results/kallisto-adult_lung,Sample_ERR315346_R1.fastq,ERR315346,adult_lung,adult_lung,ERR315346,intact_lung,,,,0,1,adult_lung_1,adult_lung
+../results/kallisto-adult_lung,Sample_ERR315353_R1.fastq,ERR315353,adult_lung,adult_lung,ERR315353,intact_lung,,,,0,2,adult_lung_2,adult_lung
+../results/kallisto-adult_lung,Sample_ERR315424_R1.fastq,ERR315424,adult_lung,adult_lung,ERR315424,intact_lung,,,,0,3,adult_lung_3,adult_lung
+../results/kallisto-adult_lung,Sample_ERR315439_R1.fastq,ERR315439,adult_lung,adult_lung,ERR315439,intact_lung,,,,0,4,adult_lung_4,adult_lung
+../results/kallisto-adult_lung,Sample_SRR786753_R1.fastq,SRR786753,fetal_lung,fetal_lung,SRR786753,intact_lung,,,,0,0,fetal_lung_0,fetal_lung
+../results/kallisto-adult_lung,Sample_SRR786754_R1.fastq,SRR786754,fetal_lung,fetal_lung,SRR786754,intact_lung,,,,0,1,fetal_lung_1,fetal_lung
+../results/kallisto-adult_lung,Sample_SRR786756_R1.fastq,SRR786756,fetal_lung,fetal_lung,SRR786756,intact_lung,,,,0,2,fetal_lung_2,fetal_lung
+../results/kallisto-adult_lung,Sample_SRR786762_R1.fastq,SRR786762,fetal_lung,fetal_lung,SRR786762,intact_lung,,,,0,3,fetal_lung_3,fetal_lung
+../results/kallisto-adult_lung,Sample_SRR786769_R1.fastq,SRR786769,fetal_lung,fetal_lung,SRR786769,intact_lung,,,,0,4,fetal_lung_4,fetal_lung
+../results/kallisto-adult_lung,Sample_SRR786780_R1.fastq,SRR786780,fetal_lung,fetal_lung,SRR786780,intact_lung,,,,0,5,fetal_lung_5,fetal_lung

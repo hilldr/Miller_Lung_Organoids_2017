@@ -1,0 +1,2207 @@
+#+TITLE: Fetal lung buds and stuff
+#+DATE:
+* Description
+* Analysis
+** kallisto processing
+#+begin_src sh :tangle :tangle kallisto-alignment.sh :eval no
+#! /bin/bash
+## KALLISTO PROCESSING SCRIPT
+DT1=$(date '+%d/%m/%Y %H:%M:%S')
+INDEX=/data/genomes/Homo_sapiens.GRCh38.rel79.cdna.all.idx
+EMAIL=d2.david.hill@gmail.com
+## This is the directory where your kallisto results will be deposited
+RESULTDIR=../results/kallisto-Run_1815/
+## make folder to deposit results
+mkdir -p $RESULTDIR
+for dir in ../data/fastq/Run_1815/spence/*
+do
+    for file in $dir/*.fastq*
+    do
+    SHORTNAME=$(basename "$file")
+    NAME2="${SHORTNAME##*/}"
+    DIRNAME="${NAME2%.*}"  
+    # These settings are for single-end 50 bp reads
+    kallisto quant -i $INDEX --output-dir=$RESULTDIR/$DIRNAME --threads=8 \
+	     --bootstrap-samples=100 --single --fragment-length=50 --sd=1 $file
+    done
+done
+
+## Send email notification of script completion
+DT2=$(date '+%d/%m/%Y %H:%M:%S')
+echo "Kalliso run initiated at $DT1 complete at $DT2" | mail -s "Kallisto complete" $EMAIL
+
+#+end_src
+** Export counts
+#+begin_src R :session *R* :results silent :exports code :eval yes
+## export complete dataset with DESeq2
+## create directory to deposit results
+## create directory to deposit results
+data.dir <- "../results/full-dataset"
+dir.create(path = data.dir, recursive = TRUE)
+
+## read in table with sample metadata
+samples <- readr::read_csv(file = file.path(data.dir,"AJMsample_key.csv"))
+
+## setup access to kallisto read files
+files <- file.path(samples$directory,
+                   samples$file_name,
+                   "abundance.h5") 
+
+## set sample names as description_rep#_seq_rep#
+names(files) <- samples$short_name
+## check that all files are found
+if (all(file.exists(files)) == FALSE) {
+    print("kallisto files not found")
+    stop()
+}
+
+## associate transcripts with gene IDs
+## create biomart reference
+mart <- biomaRt::useMart(biomart = "ENSEMBL_MART_ENSEMBL",
+  dataset = "hsapiens_gene_ensembl",
+  host = 'ensembl.org')
+## create index of gene names
+tx2gene <- biomaRt::getBM(attributes = c("ensembl_transcript_id",
+                                         "external_gene_name"),
+                          mart = mart)
+## import kallisto data and generate count dataframe (dds)
+## http://bioconductor.org/packages/release/bioc/vignettes/tximport/inst/doc/tximport.html
+library(readr)
+txi <- tximport::tximport(files, type = "kallisto", tx2gene = tx2gene)
+
+## export abundance counts
+write.csv(txi$abundance, file = file.path(data.dir, "complete_dataset_txi.csv"))
+
+library(DESeq2)
+## https://bioconductor.org/packages/devel/bioc/vignettes/DESeq2/inst/doc/DESeq2.html
+dds <- DESeq2::DESeqDataSetFromTximport(txi,
+                                        colData = samples,
+                                        design = ~ code_name)
+## pre-filter out counts < 1
+dds <- dds[rowSums(counts(dds)) > 1, ]
+
+## write out normalized expression counts
+dds <- DESeq2::estimateSizeFactors(dds)
+ddscounts <- DESeq2::counts(dds, normalized = TRUE)
+
+## write expression matrix to file
+write.csv(ddscounts, file =  file.path(data.dir, "complete-dataset_DESeq2-normalized-counts.csv"))
+save(dds, file = file.path(data.dir, "dds.Rdata"))
+rm(list = ls())
+#+end_src
+** Principle component analysis
+#+begin_src R :session *R* :exports code :results graphics :file ../results/full-dataset/PCA.png :width 1000 :height 1000 :eval yes :tangle figure1.R
+## PCA analysis ------------------------------------------------------
+## Load dataset from file
+data.dir <- "../results/full-dataset"
+df <- readr::read_csv(file = file.path(data.dir,"complete-dataset_DESeq2-normalized-counts.csv"))
+
+## rename for SeqRetriever compatibility
+
+num.data <- df[,sapply(df,is.numeric)]
+
+## read in table with sample metadata
+samples <- readr::read_csv(file = file.path(data.dir,"AJMsample_key.csv"))
+group <- samples$sample_name
+## pca.data <- num.data[apply(num.data, 1, sd, na.rm=TRUE) != 0,]
+## calculate variance by row (gene)
+var <- apply(num.data, 1, sd, na.rm = TRUE)
+## adjust cut off according to variance percentile
+pca.data <- num.data[var > quantile(var, 0.9) & var != 0,]
+pca <- prcomp(t(pca.data),scale = TRUE,center = TRUE)
+scores <- data.frame(colnames(pca.data), pca$x[,1:ncol(pca$x)],group)
+
+
+## PCA plot
+## function to format decimals as precentage
+percent <- function(x, digits = 2, format = "f", ...) {
+  paste0(formatC(100 * x, format = format, digits = digits, ...), "%")
+}
+
+library(ggplot2)
+library(RColorBrewer)
+source("../../../HIO_Ecoli_paper/DOC/eLife/src/ggplot2-themes.R")
+fig1c <- qplot(x = PC1, y = PC2, data = scores) +  
+    scale_fill_manual(values = colorRampPalette(brewer.pal(length(unique(scores$group)), "Paired"))(length(unique(scores$group)))) +
+    scale_color_manual(values = colorRampPalette(brewer.pal(length(unique(scores$group)), "Paired"))(length(unique(scores$group)))) +
+    geom_point(shape = 21, aes(fill = factor(group), color = factor(group)), size = 12) +
+    theme1 +
+    theme(legend.position = "bottom",
+          legend.background = element_rect(colour = "white"),
+          legend.key = element_rect(color = "white",fill = "white")) +
+    geom_hline(yintercept = 0,
+               size = 1, linetype = "dashed", color = "grey70") +
+    geom_vline(xintercept = 0,
+               size = 1, linetype = "dashed", color = "grey70") +
+    coord_fixed(ratio = 1) +
+    xlab(paste("PC1 (",percent(round(summary(pca)$importance[2,1],4)),")",sep = "")) +
+    ylab(paste("PC2 (",percent(round(summary(pca)$importance[2,2],4)),")",sep = ""))
+
+print(fig1c)
+print(length(rownames(pca.data)))
+#+end_src
+
+#+RESULTS:
+[[file:../results/full-dataset/PCA.png]]
+** Distance Tree
+#+begin_src R :session *R* :exports code :results graphics :file ../results/full-dataset/distance-tree.png :width 1000 :height 800 :eval yes
+## PCA analysis ------------------------------------------------------
+## Load dataset from file
+data.dir <- "../results/full-dataset"
+df <- readr::read_csv(file = file.path(data.dir,"complete-dataset_DESeq2-normalized-counts.csv"))
+
+## rename for SeqRetriever compatibility
+
+num.data <- df[,sapply(df,is.numeric)]
+
+## read in table with sample metadata
+samples <- readr::read_csv(file = file.path(data.dir,"AJMsample_key.csv"))
+group <- samples$sample_name
+## pca.data <- num.data[apply(num.data, 1, sd, na.rm=TRUE) != 0,]
+## calculate variance by row (gene)
+var <- apply(num.data, 1, sd, na.rm = TRUE)
+## adjust cut off according to variance percentile
+pca.data <- num.data[var > quantile(var, 0.1) & var != 0,]
+pca <- prcomp(t(pca.data),scale = TRUE,center = TRUE)
+scores <- data.frame(colnames(pca.data), pca$x[,1:ncol(pca$x)],group)
+cor1 <- cor(pca.data, method = "pearson")
+## determine order for axis clustering
+
+library(magrittr)
+library(ggtree)
+#library(ape)
+tree <- dist(cor1, method = "canberra") %>% hclust(method = "mcquitty") %>% as.phylo
+plot <- ggplot(tree) + geom_tree(size = 3) + theme_tree() + geom_tiplab(size = 5, hjust = 1, offset = 0.65)
+print(plot)
+#+end_src
+
+#+RESULTS:
+[[file:../results/full-dataset/distance-tree.png]]
+* tSNE
+#+begin_src R :session *R* :exports both :results graphics :file ../results/full-dataset/tsne_analysis.png  :width 1000 :height 1000 :eval yes :tangle figure1.R
+## TSNE analysis ----------------------------------------------------------------
+##http://distill.pub/2016/misread-tsne/
+## PCA analysis ------------------------------------------------------
+## Load dataset from file
+data.dir <- "../results/full-dataset"
+df <- readr::read_csv(file = file.path(data.dir,"complete-dataset_DESeq2-normalized-counts.csv"))
+
+## rename for SeqRetriever compatibility
+
+num.data <- df[,sapply(df,is.numeric)]
+samples <- readr::read_csv(file = file.path(data.dir,"AJMsample_key.csv"))
+group <- samples$sample_name
+## pca.data <- num.data[apply(num.data, 1, sd, na.rm=TRUE) != 0,]
+## calculate variance by row (gene)
+var <- apply(num.data, 1, sd, na.rm=TRUE)
+## adjust cut off according to variance percentile
+pca.data <- num.data[var > quantile(var, 0.1) & var != 0,]
+library(Rtsne)
+set.seed(3210)
+tsne <- Rtsne(as.matrix(unique(t(pca.data))),
+              dims = 2,
+	      perplexity = 10,
+              theta = 0.5)
+scores <- data.frame(tsne$Y,group)
+#scores$fmt <- as.factor(sapply(strsplit(x = as.character(scores$group), split = "[_]"),"[",2))
+#scores$day <- as.factor(sapply(strsplit(x = as.character(scores$group), split = "[_]"),"[",3))
+
+
+library(RColorBrewer) 
+library(ggplot2)
+library(grid)
+
+plot <- ggplot(data = scores, aes(x = X1, y = X2, fill = group)) +
+    scale_fill_manual(values = colorRampPalette(brewer.pal(length(unique(scores$group)), "Set1"))(length(unique(scores$group)))) +
+    geom_point(shape = 21, size = 12) +
+  #  scale_fill_brewer(palette = "Paired") +
+    theme1 + 
+    theme(legend.position = "bottom",
+          legend.background = element_rect(colour = "white"),
+          legend.key = element_rect(color = "white", fill = "white")) +
+    coord_fixed(ratio = 1)
+
+print(plot)
+                                  
+#+end_src
+
+#+RESULTS:
+[[file:../results/full-dataset/tsne_analysis.png]]
+
+
+* Figure 1 
+** Notes 
+secondary point we want to make is that the conditions we are using to maintain the HLOs maintains their "progenitor-like" character in vitro
+
+We need to make the second point first, in figure 1...so essentially we need to show that the genes enriched in human fetal lung buds are maintained in the human fetal derived HLOs. Here, the PCA does not help our case, because in vitro culture is a major driver of gene expression differences, and does not help us make our case of "similarity", so we will need to do this indirectly - perhaps by first identifying genes enriched in freshly isloated bud-tips, and then by comparing that list to the fetal-organoid genes.
+
+*For Figure 1* - the focus is on the human fetal buds, we should probably set up the story by showing genes enriched in the human fetal buds by doing differential expression for one of the following:
+
+Hi David - Re: "For Figure 1" (a) - Differential expression....i've been looking at the gene expression table you sent us the other day, perhaps the best comparison won't be  "intact distal lung" vs. "lung_buds_0" - it looks like a lot of the highly expressed epithelial genes are also very high in the intact sample...so we will probably lose a lot of important genes.
+
+Honestly, the best comparison looks like it will be "lung_buds_0" vs. "enteroids"....but I don't like trying to justify this approach i.e "we compared intestine to lung"...seems strange to me.
+
+I wonder if a better approach will be to do a k-means clustering to find a gene program that is shared between freshly isolated buds ("lung_buds_0"), and in vitro cultured buds ("lung_buds_14") relative to enteroids? The rationale would be that we "compared human fetal tissues" and found a gene program linked to early fetal lung, and isolated lung buds"
+** Export counts
+#+begin_src R :session *R* :results silent :exports code :eval yes
+## export complete dataset with DESeq2
+## create directory to deposit results
+## create directory to deposit results
+data.dir <- "../results/figure1-dataset"
+dir.create(path = data.dir, recursive = TRUE)
+
+## read in table with sample metadata
+samples <- readr::read_csv(file = file.path(data.dir,"AJMsample_key.csv"))
+samples <- samples[grep("fetal|enteroid", samples$sample_name),]
+
+## setup access to kallisto read files
+files <- file.path(samples$directory,
+                   samples$file_name,
+                   "abundance.h5") 
+
+## set sample names as description_rep#_seq_rep#
+names(files) <- samples$short_name
+## check that all files are found
+if (all(file.exists(files)) == FALSE) {
+    print("kallisto files not found")
+    stop()
+}
+
+## associate transcripts with gene IDs
+## create biomart reference
+mart <- biomaRt::useMart(biomart = "ENSEMBL_MART_ENSEMBL",
+  dataset = "hsapiens_gene_ensembl",
+  host = 'ensembl.org')
+## create index of gene names
+tx2gene <- biomaRt::getBM(attributes = c("ensembl_transcript_id",
+                                         "external_gene_name"),
+                          mart = mart)
+## import kallisto data and generate count dataframe (dds)
+## http://bioconductor.org/packages/release/bioc/vignettes/tximport/inst/doc/tximport.html
+library(readr)
+txi <- tximport::tximport(files, type = "kallisto", tx2gene = tx2gene)
+
+## export abundance counts
+write.csv(txi$abundance, file = file.path(data.dir, "complete_dataset_txi.csv"))
+
+library(DESeq2)
+## https://bioconductor.org/packages/devel/bioc/vignettes/DESeq2/inst/doc/DESeq2.html
+dds <- DESeq2::DESeqDataSetFromTximport(txi,
+                                        colData = samples,
+                                        design = ~ code_name)
+## pre-filter out counts < 1
+dds <- dds[rowSums(counts(dds)) > 1, ]
+
+## write out normalized expression counts
+dds <- DESeq2::estimateSizeFactors(dds)
+ddscounts <- DESeq2::counts(dds, normalized = TRUE)
+
+## write expression matrix to file
+write.csv(ddscounts, file =  file.path(data.dir, "complete-dataset_DESeq2-normalized-counts.csv"))
+save(dds, file = file.path(data.dir, "dds.Rdata"))
+rm(list = ls())
+#+end_src
+** tSNE
+ #+begin_src R :session *R* :exports both :results graphics :file ../results/figure1-dataset/tsne_analysis.png  :width 1000 :height 1000 :eval yes :tangle figure1.R
+## TSNE analysis ----------------------------------------------------------------
+##http://distill.pub/2016/misread-tsne/
+## PCA analysis ------------------------------------------------------
+## Load dataset from file
+data.dir <- "../results/figure1-dataset"
+df <- readr::read_csv(file = file.path(data.dir,"complete-dataset_DESeq2-normalized-counts.csv"))
+
+## rename for SeqRetriever compatibility
+
+num.data <- df[,sapply(df,is.numeric)]
+samples <- readr::read_csv(file = file.path(data.dir,"AJMsample_key.csv"))
+samples <- samples[grep("fetal|enteroid", samples$sample_name),]
+group <- samples$sample_name
+## pca.data <- num.data[apply(num.data, 1, sd, na.rm=TRUE) != 0,]
+## calculate variance by row (gene)
+var <- apply(num.data, 1, sd, na.rm=TRUE)
+## adjust cut off according to variance percentile
+pca.data <- num.data[var > quantile(var, 0.5) & var != 0,]
+library(Rtsne)
+set.seed(3210)
+tsne <- Rtsne(as.matrix(unique(t(pca.data))),
+              dims = 2,
+	      perplexity = 5,
+              theta = 0.5)
+scores <- data.frame(tsne$Y,group)
+#scores$fmt <- as.factor(sapply(strsplit(x = as.character(scores$group), split = "[_]"),"[",2))
+#scores$day <- as.factor(sapply(strsplit(x = as.character(scores$group), split = "[_]"),"[",3))
+
+
+library(RColorBrewer) 
+library(ggplot2)
+library(grid)
+source("../../../HIO_Ecoli_paper/DOC/eLife/src/ggplot2-themes.R")
+plot <- ggplot(data = scores, aes(x = X1, y = X2, fill = group)) +
+    scale_fill_manual(values = colorRampPalette(brewer.pal(length(unique(scores$group)), "Set1"))(length(unique(scores$group)))) +
+    geom_point(shape = 21, size = 12) +
+  #  scale_fill_brewer(palette = "Paired") +
+    theme1 + 
+    theme(legend.position = "bottom",
+          legend.background = element_rect(colour = "white"),
+          legend.key = element_rect(color = "white", fill = "white")) +
+    coord_fixed(ratio = 1)
+
+print(plot)
+                                  
+ #+end_src
+
+ #+RESULTS:
+ [[file:../results/figure1-dataset/tsne_analysis.png]]
+** K-means
+*** Normalized expression table by treatment condition
+ #+begin_src R :session *R* :results silent :exports code :eval yes
+library(magrittr)
+data.dir <- "../results/figure1-dataset"
+## read in table with sample metadata
+samples <- readr::read_csv(file = file.path(data.dir,"AJMsample_key.csv"))
+samples <- samples[grep("fetal|enteroid", samples$sample_name),]
+samples[grep("5d|9d", samples$sample_name),]$sample_name <- "fetal lung"
+## Load dataset from file
+df <- readr::read_csv(file = file.path(data.dir,"complete-dataset_DESeq2-normalized-counts.csv")) %>% dplyr::rename(SYMBOL = X1)
+
+df.tidy <- df %>% tidyr::gather(short_name, count, -SYMBOL) %>%
+    dplyr::left_join(samples, by = 'short_name') %>%
+    dplyr::select(SYMBOL, sample_name, count)
+
+## mean by condition
+df.tidy.mean <- df.tidy %>% dplyr::group_by(sample_name, SYMBOL) %>%
+    dplyr::summarise(mean = mean(count),
+                     var_sd = sd(count),
+                     num = n())
+
+scale_this <- function(x) as.vector(scale(x))
+
+data.scaled <- df.tidy.mean %>% dplyr::group_by(SYMBOL) %>%
+    dplyr::mutate(zscore = scale_this(mean))
+
+
+## test retrieval of gene
+test <- df.tidy.mean[df.tidy.mean$SYMBOL=="DEFB4A",]
+test2 <- data.scaled[data.scaled$SYMBOL=="DEFB4A",]
+ #+end_src
+*** spread into matrix for k means clustering
+#+begin_src R :session *R* :results silent :exports code :eval yes
+df.mean.sprd <- df.tidy.mean %>% dplyr::select(-var_sd, -num) %>% tidyr::spread(sample_name, mean)
+
+df.scaled.sprd <- data.scaled %>% dplyr::select(-var_sd, -num, -mean) %>% tidyr::spread(sample_name, zscore)
+
+
+## calculate variance by row (gene)
+var <- apply(df.scaled.sprd, 1, sd, na.rm = TRUE)
+## adjust cut off according to variance percentile
+mat.in <- df.scaled.sprd[var > quantile(var, 0.1) & var != 0,]
+#mat.in <- df.scaled.sprd
+## subset to numeric columns only
+num.data <- mat.in[,sapply(mat.in,is.numeric)]
+## convert to matrix for k-means clustering
+df.mat <- as.matrix(num.data)
+#+end_src
+
+
+#+begin_src R :session *R* :exports code :results graphics :file ../results/figure1-dataset/kmeans-clusters.png :width 1000 :height 600 :eval yes
+set.seed(348)
+kclust <- kmeans(df.mat, centers = 6)
+dat <- broom::tidy(kclust)
+ord <- hclust(dist(dat[,1:4], method = "euclidean"), method = "ward.D")$order
+ord2 <- hclust(dist(t(dat[,1:4]), method = "euclidean"), method = "median")$order
+## summary stats for each cluster
+colnames(dat)[1:4] <- colnames(df.scaled.sprd)[2:5]
+plot.data <- dat %>% tidyr::gather(strain, zscore, -size, -withinss, -cluster)
+
+library(ggplot2)
+theme1 <- theme(text = element_text(size = 32),
+                legend.key.size = unit(1,"cm"))
+plot.data$cluster <- factor(plot.data$cluster, levels = plot.data$cluster[ord])
+plot.data$strain <- factor(plot.data$strain, levels = unique(plot.data$strain)[ord2])
+
+heatmap <- ggplot(data = plot.data,
+                  aes(x = cluster, y = strain, fill = zscore)) +
+    geom_tile(stat = "identity") +
+    scale_fill_distiller(name = "Cluster Z-score ", palette = "RdYlBu") +
+    ylab("") +
+    coord_fixed(ratio = 1) +
+    theme(legend.position = "bottom") + theme1 
+#+end_src
+
+#+begin_src R :session *R* :exports code :results graphics :file ../results/figure1-dataset/kmeans-clusters-histogram.png :width 1000 :height 600 :eval yes
+library(ggstance)
+dat$cluster <- factor(dat$cluster, levels = plot.data$cluster[ord])
+hist <- ggplot(data = dat, aes(x = as.factor(cluster), y = size)) +
+    geom_bar(stat = "identity") + theme_classic() + theme1 +
+    ylab("genes per cluster") + xlab("cluster")
+
+print(hist)
+#library(gridExtra)
+#grid1 <- grid.arrange(heatmap, hist, nrow = 2)
+#+end_src
+
+#+RESULTS:
+[[file:../results/figure1-dataset/kmeans-clusters-histogram.png]]
+
+#+begin_src R :session *R* :results silent :exports code :eval yes
+## add back cluster assignments
+mat.in$cluster <- kclust$cluster
+df.cluster <- mat.in
+
+## tidy up the data
+df.cluster2 <- df.cluster %>% tidyr::gather(sample_name, zscore, -SYMBOL, -cluster)
+write.csv(df.cluster2, file.path(data.dir, "cluster-assignments_K6.csv"))
+
+clust6 <- subset(df.cluster2, df.cluster2$cluster == 6 & df.cluster2$zscore > 0) %>% tidyr::spread(sample_name, zscore)
+write.csv(clust6, file.path(data.dir, "cluster-6-genes.csv"))
+#+end_src
+* Figure1 - no whole fetal lung tissue   
+** Export counts
+#+begin_src R :session *R* :results silent :exports code :eval yes
+## export complete dataset with DESeq2
+## create directory to deposit results
+## create directory to deposit results
+data.dir <- "../results/figure1b-dataset"
+dir.create(path = data.dir, recursive = TRUE)
+
+## read in table with sample metadata
+samples <- readr::read_csv(file = file.path(data.dir,"AJMsample_key.csv"))
+samples <- samples[grep("progenitor|uncultured|enteroid", samples$sample_name),]
+
+## setup access to kallisto read files
+files <- file.path(samples$directory,
+                   samples$file_name,
+                   "abundance.h5") 
+
+## set sample names as description_rep#_seq_rep#
+names(files) <- samples$short_name
+## check that all files are found
+if (all(file.exists(files)) == FALSE) {
+    print("kallisto files not found")
+    stop()
+}
+
+## associate transcripts with gene IDs
+## create biomart reference
+mart <- biomaRt::useMart(biomart = "ENSEMBL_MART_ENSEMBL",
+  dataset = "hsapiens_gene_ensembl",
+  host = 'ensembl.org')
+## create index of gene names
+tx2gene <- biomaRt::getBM(attributes = c("ensembl_transcript_id",
+                                         "external_gene_name"),
+                          mart = mart)
+## import kallisto data and generate count dataframe (dds)
+## http://bioconductor.org/packages/release/bioc/vignettes/tximport/inst/doc/tximport.html
+library(readr)
+txi <- tximport::tximport(files, type = "kallisto", tx2gene = tx2gene)
+
+## export abundance counts
+write.csv(txi$abundance, file = file.path(data.dir, "complete_dataset_txi.csv"))
+
+library(DESeq2)
+## https://bioconductor.org/packages/devel/bioc/vignettes/DESeq2/inst/doc/DESeq2.html
+dds <- DESeq2::DESeqDataSetFromTximport(txi,
+                                        colData = samples,
+                                        design = ~ code_name)
+## pre-filter out counts < 1
+dds <- dds[rowSums(counts(dds)) > 1, ]
+
+## write out normalized expression counts
+dds <- DESeq2::estimateSizeFactors(dds)
+ddscounts <- DESeq2::counts(dds, normalized = TRUE)
+
+## write expression matrix to file
+write.csv(ddscounts, file =  file.path(data.dir, "complete-dataset_DESeq2-normalized-counts.csv"))
+save(dds, file = file.path(data.dir, "dds.Rdata"))
+rm(list = ls())
+#+end_src
+** tSNE
+ #+begin_src R :session *R* :exports code :results graphics :file ../results/figure1b-dataset/tsne_analysis.png  :width 1000 :height 1000 :eval yes :tangle figure1b.R
+## TSNE analysis ----------------------------------------------------------------
+##http://distill.pub/2016/misread-tsne/
+## PCA analysis ------------------------------------------------------
+## Load dataset from file
+data.dir <- "../results/figure1b-dataset"
+df <- readr::read_csv(file = file.path(data.dir,"complete-dataset_DESeq2-normalized-counts.csv"))
+
+## rename for SeqRetriever compatibility
+
+num.data <- df[,sapply(df,is.numeric)]
+samples <- readr::read_csv(file = file.path(data.dir,"AJMsample_key.csv"))
+samples <- samples[grep("progenitor|uncultured|enteroid", samples$sample_name),]
+group <- samples$sample_name
+## pca.data <- num.data[apply(num.data, 1, sd, na.rm=TRUE) != 0,]
+## calculate variance by row (gene)
+var <- apply(num.data, 1, sd, na.rm=TRUE)
+## adjust cut off according to variance percentile
+pca.data <- num.data[var > quantile(var, 0.5) & var != 0,]
+library(Rtsne)
+set.seed(3210)
+tsne <- Rtsne(as.matrix(unique(t(pca.data))),
+              dims = 2,
+	      perplexity = 3,
+              theta = 0.5)
+scores <- data.frame(tsne$Y,group)
+#scores$fmt <- as.factor(sapply(strsplit(x = as.character(scores$group), split = "[_]"),"[",2))
+#scores$day <- as.factor(sapply(strsplit(x = as.character(scores$group), split = "[_]"),"[",3))
+
+
+library(RColorBrewer) 
+library(ggplot2)
+library(grid)
+source("../../../HIO_Ecoli_paper/DOC/eLife/src/ggplot2-themes.R")
+plot <- ggplot(data = scores, aes(x = X1, y = X2, fill = group)) +
+    scale_fill_manual(values = colorRampPalette(brewer.pal(length(unique(scores$group)), "Set1"))(length(unique(scores$group)))) +
+    geom_point(shape = 21, size = 12) +
+  #  scale_fill_brewer(palette = "Paired") +
+    theme1 + 
+    theme(legend.position = "bottom",
+          legend.background = element_rect(colour = "white"),
+          legend.key = element_rect(color = "white", fill = "white")) +
+    coord_fixed(ratio = 1)
+
+print(plot)
+                                  
+ #+end_src
+
+ #+RESULTS:
+ [[file:../results/figure1b-dataset/tsne_analysis.png]]
+** K-means
+*** Normalized expression table by treatment condition
+ #+begin_src R :session *R* :results silent :exports code :eval yes
+library(magrittr)
+data.dir <- "../results/figure1b-dataset"
+## read in table with sample metadata
+samples <- readr::read_csv(file = file.path(data.dir,"AJMsample_key.csv"))
+samples <- samples[grep("progenitor|uncultured|enteroid", samples$sample_name),]
+samples[grep("5d|9d", samples$sample_name),]$sample_name <- "fetal lung"
+## Load dataset from file
+df <- readr::read_csv(file = file.path(data.dir,"complete-dataset_DESeq2-normalized-counts.csv")) %>% dplyr::rename(SYMBOL = X1)
+
+df.tidy <- df %>% tidyr::gather(short_name, count, -SYMBOL) %>%
+    dplyr::left_join(samples, by = 'short_name') %>%
+    dplyr::select(SYMBOL, sample_name, count)
+
+## mean by condition
+df.tidy.mean <- df.tidy %>% dplyr::group_by(sample_name, SYMBOL) %>%
+    dplyr::summarise(mean = mean(count),
+                     var_sd = sd(count),
+                     num = n())
+
+scale_this <- function(x) as.vector(scale(x))
+
+data.scaled <- df.tidy.mean %>% dplyr::group_by(SYMBOL) %>%
+    dplyr::mutate(zscore = scale_this(mean))
+
+
+## test retrieval of gene
+test <- df.tidy.mean[df.tidy.mean$SYMBOL=="DEFB4A",]
+test2 <- data.scaled[data.scaled$SYMBOL=="DEFB4A",]
+ #+end_src
+*** spread into matrix for k means clustering
+#+begin_src R :session *R* :results silent :exports code :eval yes
+df.mean.sprd <- df.tidy.mean %>% dplyr::select(-var_sd, -num) %>% tidyr::spread(sample_name, mean)
+
+df.scaled.sprd <- data.scaled %>% dplyr::select(-var_sd, -num, -mean) %>% tidyr::spread(sample_name, zscore)
+
+
+## calculate variance by row (gene)
+var <- apply(df.scaled.sprd, 1, sd, na.rm = TRUE)
+## adjust cut off according to variance percentile
+mat.in <- df.scaled.sprd[var > quantile(var, 0.1) & var != 0,]
+#mat.in <- df.scaled.sprd
+## subset to numeric columns only
+num.data <- mat.in[,sapply(mat.in,is.numeric)]
+## convert to matrix for k-means clustering
+df.mat <- as.matrix(num.data)
+#+end_src
+
+
+#+begin_src R :session *R* :exports code :results graphics :file ../results/figure1b-dataset/kmeans-clusters.png :width 1000 :height 600 :eval yes
+set.seed(348)
+kclust <- kmeans(df.mat, centers = 7)
+dat <- broom::tidy(kclust)
+ord <- hclust(dist(dat[,1:3], method = "euclidean"), method = "ward.D")$order
+ord2 <- hclust(dist(t(dat[,1:3]), method = "euclidean"), method = "median")$order
+## summary stats for each cluster
+colnames(dat)[1:3] <- colnames(df.scaled.sprd)[2:4]
+plot.data <- dat %>% tidyr::gather(strain, zscore, -size, -withinss, -cluster)
+
+library(ggplot2)
+theme1 <- theme(text = element_text(size = 32),
+                legend.key.size = unit(1,"cm"))
+plot.data$cluster <- factor(plot.data$cluster, levels = plot.data$cluster[ord])
+plot.data$strain <- factor(plot.data$strain, levels = unique(plot.data$strain)[ord2])
+
+heatmap <- ggplot(data = plot.data,
+                  aes(x = cluster, y = strain, fill = zscore)) +
+    geom_tile(stat = "identity") +
+    scale_fill_distiller(name = "Cluster Z-score ", palette = "RdYlBu") +
+    ylab("") +
+    coord_fixed(ratio = 1) +
+    theme(legend.position = "bottom") + theme1 
+print(heatmap)
+#+end_src
+
+#+RESULTS:
+[[file:../results/figure1b-dataset/kmeans-clusters.png]]
+
+#+begin_src R :session *R* :exports code :results graphics :file ../results/figure1b-dataset/kmeans-clusters-histogram.png :width 1000 :height 600 :eval yes
+library(ggstance)
+dat$cluster <- factor(dat$cluster, levels = plot.data$cluster[ord])
+hist <- ggplot(data = dat, aes(x = as.factor(cluster), y = size)) +
+    geom_bar(stat = "identity") + theme_classic() + theme1 +
+    ylab("genes per cluster") + xlab("cluster")
+
+print(hist)
+#library(gridExtra)
+#grid1 <- grid.arrange(heatmap, hist, nrow = 2)
+#+end_src
+
+#+RESULTS:
+[[file:../results/figure1b-dataset/kmeans-clusters-histogram.png]]
+
+#+begin_src R :session *R* :results silent :exports code :eval yes
+## add back cluster assignments
+mat.in$cluster <- kclust$cluster
+df.cluster <- mat.in
+
+## tidy up the data
+df.cluster2 <- df.cluster %>% tidyr::gather(sample_name, zscore, -SYMBOL, -cluster)
+write.csv(df.cluster2, file.path(data.dir, "cluster-assignments_K6.csv"))
+
+clust6 <- subset(df.cluster2, df.cluster2$cluster == 3 & df.cluster2$zscore > 0) %>% tidyr::spread(sample_name, zscore)
+write.csv(clust6, file.path(data.dir, "cluster-3-genes.csv"))
+#+end_src
+
+* CANCEL Figure 1 - swap enteroids out for hES cells 
+
+** Export counts
+#+begin_src R :session *R* :results silent :exports code :eval yes
+## export complete dataset with DESeq2
+## create directory to deposit results
+## create directory to deposit results
+data.dir <- "../results/figure1-hES-dataset"
+dir.create(path = data.dir, recursive = TRUE)
+
+## read in table with sample metadata
+samples <- readr::read_csv(file = file.path(data.dir,"AJMsample_key.csv"))
+samples <- samples[grep("fetal|hPSC", samples$sample_name),]
+
+## setup access to kallisto read files
+files <- file.path(samples$directory,
+                   samples$file_name,
+                   "abundance.h5") 
+
+## set sample names as description_rep#_seq_rep#
+names(files) <- samples$short_name
+## check that all files are found
+if (all(file.exists(files)) == FALSE) {
+    print("kallisto files not found")
+    stop()
+}
+
+## associate transcripts with gene IDs
+## create biomart reference
+mart <- biomaRt::useMart(biomart = "ENSEMBL_MART_ENSEMBL",
+  dataset = "hsapiens_gene_ensembl",
+  host = 'ensembl.org')
+## create index of gene names
+tx2gene <- biomaRt::getBM(attributes = c("ensembl_transcript_id",
+                                         "external_gene_name"),
+                          mart = mart)
+## import kallisto data and generate count dataframe (dds)
+## http://bioconductor.org/packages/release/bioc/vignettes/tximport/inst/doc/tximport.html
+library(readr)
+txi <- tximport::tximport(files, type = "kallisto", tx2gene = tx2gene)
+
+## export abundance counts
+write.csv(txi$abundance, file = file.path(data.dir, "complete_dataset_txi.csv"))
+
+library(DESeq2)
+## https://bioconductor.org/packages/devel/bioc/vignettes/DESeq2/inst/doc/DESeq2.html
+dds <- DESeq2::DESeqDataSetFromTximport(txi,
+                                        colData = samples,
+                                        design = ~ code_name)
+## pre-filter out counts < 1
+dds <- dds[rowSums(counts(dds)) > 1, ]
+
+## write out normalized expression counts
+dds <- DESeq2::estimateSizeFactors(dds)
+ddscounts <- DESeq2::counts(dds, normalized = TRUE)
+
+## write expression matrix to file
+write.csv(ddscounts, file =  file.path(data.dir, "complete-dataset_DESeq2-normalized-counts.csv"))
+save(dds, file = file.path(data.dir, "dds.Rdata"))
+rm(list = ls())
+#+end_src
+** tSNE
+ #+begin_src R :session *R* :exports code :results graphics :file ../results/figure1-hES-dataset/tsne_analysis.png  :width 1000 :height 1000 :eval yes :tangle figure1.R
+## TSNE analysis ----------------------------------------------------------------
+##http://distill.pub/2016/misread-tsne/
+## PCA analysis ------------------------------------------------------
+## Load dataset from file
+data.dir <- "../results/figure1-hES-dataset"
+df <- readr::read_csv(file = file.path(data.dir,"complete-dataset_DESeq2-normalized-counts.csv"))
+
+## rename for SeqRetriever compatibility
+
+num.data <- df[,sapply(df,is.numeric)]
+samples <- readr::read_csv(file = file.path(data.dir,"AJMsample_key.csv"))
+samples <- samples[grep("fetal|hPSC", samples$sample_name),]
+samples[grep("5d|9d", samples$sample_name),]$sample_name <- "fetal lung"
+group <- samples$sample_name
+## pca.data <- num.data[apply(num.data, 1, sd, na.rm=TRUE) != 0,]
+## calculate variance by row (gene)
+var <- apply(num.data, 1, sd, na.rm=TRUE)
+## adjust cut off according to variance percentile
+pca.data <- num.data[var > quantile(var, 0.5) & var != 0,]
+library(Rtsne)
+set.seed(3210)
+tsne <- Rtsne(as.matrix(unique(t(pca.data))),
+              dims = 2,
+	      perplexity = 5,
+              theta = 0.5)
+scores <- data.frame(tsne$Y,group)
+#scores$fmt <- as.factor(sapply(strsplit(x = as.character(scores$group), split = "[_]"),"[",2))
+#scores$day <- as.factor(sapply(strsplit(x = as.character(scores$group), split = "[_]"),"[",3))
+
+
+library(RColorBrewer) 
+library(ggplot2)
+library(grid)
+source("../../../HIO_Ecoli_paper/DOC/eLife/src/ggplot2-themes.R")
+plot <- ggplot(data = scores, aes(x = X1, y = X2, fill = group)) +
+    scale_fill_manual(values = colorRampPalette(brewer.pal(length(unique(scores$group)), "Set1"))(length(unique(scores$group)))) +
+    geom_point(shape = 21, size = 12) +
+  #  scale_fill_brewer(palette = "Paired") +
+    theme1 + 
+    theme(legend.position = "bottom",
+          legend.background = element_rect(colour = "white"),
+          legend.key = element_rect(color = "white", fill = "white")) +
+    coord_fixed(ratio = 1)
+
+print(plot)
+                                  
+ #+end_src
+
+ #+RESULTS:
+ [[file:../results/figure1-hES-dataset/tsne_analysis.png]]
+** K-means
+*** Normalized expression table by treatment condition
+ #+begin_src R :session *R* :results silent :exports code :eval yes
+library(magrittr)
+data.dir <- "../results/figure1-hES-dataset"
+## read in table with sample metadata
+samples <- readr::read_csv(file = file.path(data.dir,"AJMsample_key.csv"))
+samples <- samples[grep("fetal|hPSC", samples$sample_name),]
+samples[grep("5d|9d", samples$sample_name),]$sample_name <- "fetal lung"
+## Load dataset from file
+df <- readr::read_csv(file = file.path(data.dir,"complete-dataset_DESeq2-normalized-counts.csv")) %>% dplyr::rename(SYMBOL = X1)
+
+df.tidy <- df %>% tidyr::gather(short_name, count, -SYMBOL) %>%
+    dplyr::left_join(samples, by = 'short_name') %>%
+    dplyr::select(SYMBOL, sample_name, count)
+
+## mean by condition
+df.tidy.mean <- df.tidy %>% dplyr::group_by(sample_name, SYMBOL) %>%
+    dplyr::summarise(mean = mean(count),
+                     var_sd = sd(count),
+                     num = n())
+
+scale_this <- function(x) as.vector(scale(x))
+
+data.scaled <- df.tidy.mean %>% dplyr::group_by(SYMBOL) %>%
+    dplyr::mutate(zscore = scale_this(mean))
+
+
+## test retrieval of gene
+test <- df.tidy.mean[df.tidy.mean$SYMBOL=="DEFB4A",]
+test2 <- data.scaled[data.scaled$SYMBOL=="DEFB4A",]
+ #+end_src
+*** spread into matrix for k means clustering
+#+begin_src R :session *R* :results silent :exports code :eval yes
+df.mean.sprd <- df.tidy.mean %>% dplyr::select(-var_sd, -num) %>% tidyr::spread(sample_name, mean)
+
+df.scaled.sprd <- data.scaled %>% dplyr::select(-var_sd, -num, -mean) %>% tidyr::spread(sample_name, zscore)
+
+
+## calculate variance by row (gene)
+var <- apply(df.scaled.sprd, 1, sd, na.rm = TRUE)
+## adjust cut off according to variance percentile
+mat.in <- df.scaled.sprd[var > quantile(var, 0.1) & var != 0,]
+#mat.in <- df.scaled.sprd
+## subset to numeric columns only
+num.data <- mat.in[,sapply(mat.in,is.numeric)]
+## convert to matrix for k-means clustering
+df.mat <- as.matrix(num.data)
+#+end_src
+
+
+#+begin_src R :session *R* :exports code :results graphics :file ../results/figure1-hES-dataset/kmeans-clusters.png :width 1000 :height 600 :eval yes
+set.seed(348)
+kclust <- kmeans(df.mat, centers = 5)
+dat <- broom::tidy(kclust)
+ord <- hclust(dist(dat[,1:4], method = "euclidean"), method = "ward.D")$order
+ord2 <- hclust(dist(t(dat[,1:4]), method = "euclidean"), method = "median")$order
+## summary stats for each cluster
+colnames(dat)[1:4] <- colnames(df.scaled.sprd)[2:5]
+plot.data <- dat %>% tidyr::gather(strain, zscore, -size, -withinss, -cluster)
+
+library(ggplot2)
+theme1 <- theme(text = element_text(size = 32),
+                legend.key.size = unit(1,"cm"))
+plot.data$cluster <- factor(plot.data$cluster, levels = plot.data$cluster[ord])
+plot.data$strain <- factor(plot.data$strain, levels = unique(plot.data$strain)[ord2])
+
+heatmap <- ggplot(data = plot.data,
+                  aes(x = cluster, y = strain, fill = zscore)) +
+    geom_tile(stat = "identity") +
+    scale_fill_distiller(name = "Cluster Z-score ", palette = "RdYlBu") +
+    ylab("") +
+    coord_fixed(ratio = 1) +
+    theme(legend.position = "bottom") + theme1 
+print(heatmap)
+#+end_src
+
+#+RESULTS:
+[[file:../results/figure1-hES-dataset/kmeans-clusters.png]]
+
+#+begin_src R :session *R* :exports code :results graphics :file ../results/figure1-hES-dataset/kmeans-clusters-histogram.png :width 1000 :height 600 :eval yes
+library(ggstance)
+dat$cluster <- factor(dat$cluster, levels = plot.data$cluster[ord])
+hist <- ggplot(data = dat, aes(x = as.factor(cluster), y = size)) +
+    geom_bar(stat = "identity") + theme_classic() + theme1 +
+    ylab("genes per cluster") + xlab("cluster")
+
+print(hist)
+#library(gridExtra)
+#grid1 <- grid.arrange(heatmap, hist, nrow = 2)
+#+end_src
+
+#+RESULTS:
+[[file:../results/figure1-hES-dataset/kmeans-clusters-histogram.png]]
+
+#+begin_src R :session *R* :results silent :exports code :eval yes
+## add back cluster assignments
+mat.in$cluster <- kclust$cluster
+df.cluster <- mat.in
+
+## tidy up the data
+df.cluster2 <- df.cluster %>% tidyr::gather(sample_name, zscore, -SYMBOL, -cluster)
+write.csv(df.cluster2, file.path(data.dir, "cluster-assignments_K5.csv"))
+
+clust6 <- subset(df.cluster2, df.cluster2$cluster == 5 & df.cluster2$zscore > 0) %>% tidyr::spread(sample_name, zscore)
+write.csv(clust6, file.path(data.dir, "cluster-5-genes.csv"))
+#+end_src
+* Heatmaps  
+** Export counts
+#+begin_src R :session *R* :results silent :exports code :eval yes
+## export complete dataset with DESeq2
+## create directory to deposit results
+## create directory to deposit results
+data.dir <- "../results/heatmaps"
+dir.create(path = data.dir, recursive = TRUE)
+
+## read in table with sample metadata
+samples <- readr::read_csv(file = file.path(data.dir,"AJMsample_key.csv"))
+samples <- samples[grep("fetal", samples$sample_name),]
+
+## setup access to kallisto read files
+files <- file.path(samples$directory,
+                   samples$file_name,
+                   "abundance.h5") 
+
+## set sample names as description_rep#_seq_rep#
+names(files) <- samples$short_name
+## check that all files are found
+if (all(file.exists(files)) == FALSE) {
+    print("kallisto files not found")
+    stop()
+}
+
+## associate transcripts with gene IDs
+## create biomart reference
+mart <- biomaRt::useMart(biomart = "ENSEMBL_MART_ENSEMBL",
+  dataset = "hsapiens_gene_ensembl",
+  host = 'ensembl.org')
+## create index of gene names
+tx2gene <- biomaRt::getBM(attributes = c("ensembl_transcript_id",
+                                         "external_gene_name"),
+                          mart = mart)
+## import kallisto data and generate count dataframe (dds)
+## http://bioconductor.org/packages/release/bioc/vignettes/tximport/inst/doc/tximport.html
+library(readr)
+txi <- tximport::tximport(files, type = "kallisto", tx2gene = tx2gene)
+
+## export abundance counts
+write.csv(txi$abundance, file = file.path(data.dir, "complete_dataset_txi.csv"))
+
+library(DESeq2)
+## https://bioconductor.org/packages/devel/bioc/vignettes/DESeq2/inst/doc/DESeq2.html
+dds <- DESeq2::DESeqDataSetFromTximport(txi,
+                                        colData = samples,
+                                        design = ~ code_name)
+## pre-filter out counts < 1
+dds <- dds[rowSums(counts(dds)) > 1, ]
+
+## write out normalized expression counts
+dds <- DESeq2::estimateSizeFactors(dds)
+ddscounts <- DESeq2::counts(dds, normalized = TRUE)
+
+## write expression matrix to file
+write.csv(ddscounts, file =  file.path(data.dir, "complete-dataset_DESeq2-normalized-counts.csv"))
+save(dds, file = file.path(data.dir, "dds.Rdata"))
+rm(list = ls())
+#+end_src
+
+** setup data input 
+ #+begin_src R :session *R* :results silent :exports code :eval yes
+ ,#+begin_src R :session *R* :results silent :exports code :eval yes
+library(magrittr)
+data.dir <- "../results/heatmaps"
+## read in table with sample metadata
+samples <- readr::read_csv(file = file.path(data.dir,"AJMsample_key.csv"))
+samples <- samples[grep("fetal", samples$sample_name),]
+samples[grep("5d|9d", samples$sample_name),]$sample_name <- "fetal lung"
+## Load dataset from file
+df <- readr::read_csv(file = file.path("../results/heatmaps","complete-dataset_DESeq2-normalized-counts.csv")) %>% dplyr::rename(SYMBOL = X1)
+
+df.tidy <- df %>% tidyr::gather(short_name, count, -SYMBOL) %>%
+    dplyr::left_join(samples, by = 'short_name') %>%
+    dplyr::select(SYMBOL, sample_name, count)
+
+## mean by condition
+df.tidy.mean <- df.tidy %>% dplyr::group_by(sample_name, SYMBOL) %>%
+    dplyr::summarise(mean = mean(count),
+                     var_sd = sd(count),
+                     num = n())
+
+scale_this <- function(x) as.vector(scale(x))
+
+data.scaled <- df.tidy.mean %>% dplyr::group_by(SYMBOL) %>%
+    dplyr::mutate(zscore = scale_this(mean))
+
+genes <- readr::read_csv(file = "../results/heatmaps/GenesofInterestRNAseq.csv") %>% dplyr::rename(SYMBOL = gene)
+hm.data <- data.scaled[which(data.scaled$SYMBOL %in% genes$SYMBOL),] %>% dplyr::left_join(genes, by = 'SYMBOL')
+ #+end_src
+** plots
+
+##+begin_src R :session *R* :exports code :results graphics :file ../results/heatmaps/cell-lineage.png :width 250 :height 1000 :eval yes
+#+begin_src R :session *R* :exports code :results graphics :file ../results/heatmaps/cell-lineage.pdf :width 3.25 :height 14 :eval yes
+
+library(ggplot2)
+source("../../../HIO_Ecoli_paper/DOC/eLife/src/ggplot2-themes.R")
+
+
+hm.data$sample_name <- factor(hm.data$sample_name, levels = c("fetal lung",
+                                                  "uncultured fetal lung buds",
+                                                  "fetal progenitor organoid"))
+dat <- dplyr::select(hm.data, sample_name, mean) %>% tidyr::spread(sample_name, mean)
+ord <- hclust(dist(dat[,2:4], method = "euclidean"), method = "ward.D")$order
+
+hm.data$SYMBOL <- factor(hm.data$SYMBOL, levels = hm.data$SYMBOL[ord])
+
+#    df <- as.data.frame(t(scale(t(df))))     
+#    ## determine order for axis clustering
+#    ord <- hclust(dist(df, method = dist.method), method = hclust.method)$order
+plot <- ggplot(data = hm.data,
+               aes(x = sample_name, y = SYMBOL)) +
+    geom_tile(stat = "identity", aes(fill = log10(mean))) +
+    facet_grid(cell_lineage ~ ., scales = "free_y", space = "free", switch = "y") +
+    scale_fill_distiller(name = "Log10 count ", palette = "RdBu") +
+    scale_y_discrete(position = "right") +
+    ylab("") + xlab("") + 
+    theme1 + 
+    theme(strip.text =  element_text(size = 23),
+          legend.position = "bottom",
+	  legend.title = element_text(size = 12),
+	  legend.key.size = unit(0.5,"cm"),
+	  panel.spacing = unit(2, "lines"),
+	  axis.text.y = element_text(size = 18),
+	  axis.text.x = element_text(size = 14, angle = 90, hjust = 1, vjust = 0.5),
+	  panel.border = element_blank())
+	  
+print(plot)
+
+#+end_src
+
+#+RESULTS:
+[[file:../results/heatmaps/cell-lineage.pdf]]
+
+#+begin_src R :session *R* :exports code :results graphics :file ../results/heatmaps/transcription-factors.png :width 350 :height 800 :eval yes
+library(ggplot2)
+source("../../../HIO_Ecoli_paper/DOC/eLife/src/ggplot2-themes.R")
+
+
+hm.data$sample_name <- factor(hm.data$sample_name, levels = c("fetal lung",
+                                                  "uncultured fetal lung buds",
+                                                  "fetal progenitor organoid"))
+dat <- dplyr::select(hm.data, sample_name, mean) %>% tidyr::spread(sample_name, mean)
+ord <- hclust(dist(dat[,2:4], method = "euclidean"), method = "ward.D")$order
+
+hm.data$SYMBOL <- factor(hm.data$SYMBOL, levels = hm.data$SYMBOL[ord])
+
+#    df <- as.data.frame(t(scale(t(df))))     
+#    ## determine order for axis clustering
+#    ord <- hclust(dist(df, method = dist.method), method = hclust.method)$order
+plot <- ggplot(data = hm.data[hm.data$factor == "Transcription factors",],
+               aes(x = sample_name, y = SYMBOL)) +
+    geom_tile(stat = "identity", color ="grey", aes(fill = log10(mean))) +
+    facet_grid(factor ~ ., scales = "free_y", space = "free", switch = "y") +
+    scale_fill_distiller(name = "Log10 count ", palette = "RdBu") +
+    scale_y_discrete(position = "right") +
+    ylab("") + xlab("") + 
+    theme1 + 
+    theme(strip.text =  element_text(size = 23),
+          legend.position = "bottom",
+	  legend.title = element_text(size = 12),
+	  legend.key.size = unit(0.5,"cm"),
+	  panel.spacing = unit(2, "lines"),
+	  axis.text.y = element_text(size = 18),
+	  axis.text.x = element_text(size = 14, angle = 90, hjust = 1, vjust = 1),
+	  panel.border = element_blank())
+	  
+print(plot)
+
+#+end_src
+
+#+RESULTS:
+[[file:../results/heatmaps/transcription-factors.png]]
+
+#+begin_src R :session *R* :exports code :results graphics :file ../results/heatmaps/markers.png :width 350 :height 800 :eval yes
+library(ggplot2)
+source("../../../HIO_Ecoli_paper/DOC/eLife/src/ggplot2-themes.R")
+
+
+hm.data$sample_name <- factor(hm.data$sample_name, levels = c("fetal lung",
+                                                  "uncultured fetal lung buds",
+                                                  "fetal progenitor organoid"))
+dat <- dplyr::select(hm.data, sample_name, mean) %>% tidyr::spread(sample_name, mean)
+ord <- hclust(dist(dat[,2:4], method = "euclidean"), method = "ward.D")$order
+
+hm.data$SYMBOL <- factor(hm.data$SYMBOL, levels = hm.data$SYMBOL[ord])
+
+#    df <- as.data.frame(t(scale(t(df))))     
+#    ## determine order for axis clustering
+#    ord <- hclust(dist(df, method = dist.method), method = hclust.method)$order
+plot <- ggplot(data = hm.data[hm.data$cell_type != "none",],
+               aes(x = sample_name, y = SYMBOL)) +
+    geom_tile(stat = "identity",aes(fill = log10(mean))) +
+    facet_grid(cell_type ~ ., scales = "free_y", space = "free", switch = "y",labeller = label_wrap_gen(width = 15)) +
+    scale_fill_distiller(name = "Log10 count ", palette = "RdBu", direction = -1) +
+    scale_y_discrete(position = "right") +
+    ylab("") + xlab("") + 
+    theme1 + 
+    theme(strip.text.y =  element_text(size = 16, angle = 180),
+          legend.position = "bottom",
+	  strip.background = element_rect(color = "grey", fill = "white", size = 0.5),
+	  legend.title = element_text(size = 12),
+	  legend.key.size = unit(0.5,"cm"),
+	  panel.spacing = unit(1, "lines"),
+	  axis.text.y = element_text(size = 18),
+	  axis.text.x = element_text(size = 14, angle = 90, hjust = 1, vjust = 1),
+	  panel.border = element_blank())
+	  
+print(plot)
+#+end_src
+
+#+RESULTS:
+[[file:../results/heatmaps/markers.png]]
+* Figure 3 
+** Principle component analysis
+** Export counts
+#+begin_src R :session *R* :results silent :exports code :eval yes
+## export complete dataset with DESeq2
+## create directory to deposit results
+## create directory to deposit results
+data.dir <- "../results/figure3"
+dir.create(path = data.dir, recursive = TRUE)
+
+## read in table with sample metadata
+samples <- readr::read_csv(file = file.path(data.dir,"AJMsample_key.csv"))
+samples <- samples[grep("progenitor|uncultured|patterned|bud tip|enteroid", samples$sample_name),]
+
+## setup access to kallisto read files
+files <- file.path(samples$directory,
+                   samples$file_name,
+                   "abundance.h5") 
+
+## set sample names as description_rep#_seq_rep#
+names(files) <- samples$short_name
+## check that all files are found
+if (all(file.exists(files)) == FALSE) {
+    print("kallisto files not found")
+    stop()
+}
+
+## associate transcripts with gene IDs
+## create biomart reference
+mart <- biomaRt::useMart(biomart = "ENSEMBL_MART_ENSEMBL",
+  dataset = "hsapiens_gene_ensembl",
+  host = 'ensembl.org')
+## create index of gene names
+tx2gene <- biomaRt::getBM(attributes = c("ensembl_transcript_id",
+                                         "external_gene_name"),
+                          mart = mart)
+## import kallisto data and generate count dataframe (dds)
+## http://bioconductor.org/packages/release/bioc/vignettes/tximport/inst/doc/tximport.html
+library(readr)
+txi <- tximport::tximport(files, type = "kallisto", tx2gene = tx2gene)
+
+library(DESeq2)
+## https://bioconductor.org/packages/devel/bioc/vignettes/DESeq2/inst/doc/DESeq2.html
+dds <- DESeq2::DESeqDataSetFromTximport(txi,
+                                        colData = samples,
+                                        design = ~ code_name)
+## pre-filter out counts < 1
+dds <- dds[rowSums(counts(dds)) > 1, ]
+
+## write out normalized expression counts
+dds <- DESeq2::estimateSizeFactors(dds)
+ddscounts <- DESeq2::counts(dds, normalized = TRUE)
+
+## write expression matrix to file
+write.csv(ddscounts, file =  file.path(data.dir, "complete-dataset_DESeq2-normalized-counts_enteroid-OG.csv"))
+save(dds, file = file.path(data.dir, "dds.Rdata"))
+rm(list = ls())
+#+end_src
+
+** Export counts2
+#+begin_src R :session *R* :results silent :exports code :eval yes
+## export complete dataset with DESeq2
+## create directory to deposit results
+## create directory to deposit results
+data.dir <- "../results/figure3"
+dir.create(path = data.dir, recursive = TRUE)
+
+## read in table with sample metadata
+samples <- readr::read_csv(file = file.path(data.dir,"AJMsample_key.csv"))
+samples <- samples[grep("progenitor|uncultured|patterned|bud tip|hPSC", samples$sample_name),]
+
+## setup access to kallisto read files
+files <- file.path(samples$directory,
+                   samples$file_name,
+                   "abundance.h5") 
+
+## set sample names as description_rep#_seq_rep#
+names(files) <- samples$short_name
+## check that all files are found
+if (all(file.exists(files)) == FALSE) {
+    print("kallisto files not found")
+    stop()
+}
+
+## associate transcripts with gene IDs
+## create biomart reference
+mart <- biomaRt::useMart(biomart = "ENSEMBL_MART_ENSEMBL",
+  dataset = "hsapiens_gene_ensembl",
+  host = 'ensembl.org')
+## create index of gene names
+tx2gene <- biomaRt::getBM(attributes = c("ensembl_transcript_id",
+                                         "external_gene_name"),
+                          mart = mart)
+## import kallisto data and generate count dataframe (dds)
+## http://bioconductor.org/packages/release/bioc/vignettes/tximport/inst/doc/tximport.html
+library(readr)
+txi <- tximport::tximport(files, type = "kallisto", tx2gene = tx2gene)
+
+library(DESeq2)
+## https://bioconductor.org/packages/devel/bioc/vignettes/DESeq2/inst/doc/DESeq2.html
+dds <- DESeq2::DESeqDataSetFromTximport(txi,
+                                        colData = samples,
+                                        design = ~ code_name)
+## pre-filter out counts < 1
+dds <- dds[rowSums(counts(dds)) > 1, ]
+
+## write out normalized expression counts
+dds <- DESeq2::estimateSizeFactors(dds)
+ddscounts <- DESeq2::counts(dds, normalized = TRUE)
+
+## write expression matrix to file
+write.csv(ddscounts, file =  file.path(data.dir, "complete-dataset_DESeq2-normalized-hPSC-OG.csv"))
+save(dds, file = file.path(data.dir, "dds.Rdata"))
+rm(list = ls())
+#+end_src
+
+
+** PCA
+ #+begin_src R :session *R* :exports both :results graphics :file ../results/figure3/PCA_analysis-hPSC.png  :width 1000 :height 1000 :eval yes :tangle figure1b.R
+## TSNE analysis ----------------------------------------------------------------
+##http://distill.pub/2016/misread-tsne/
+## PCA analysis ------------------------------------------------------
+## Load dataset from file
+data.dir <- "../results/figure3"
+df <- readr::read_csv(file = file.path(data.dir,"complete-dataset_DESeq2-normalized-hPSC-OG.csv"))
+
+## rename for SeqRetriever compatibility
+
+num.data <- df[,sapply(df,is.numeric)]
+samples <- readr::read_csv(file = file.path(data.dir,"AJMsample_key.csv"))
+samples <- samples[grep("progenitor|uncultured|patterned|bud tip|hPSC", samples$sample_name),]
+group <- samples$sample_name
+## pca.data <- num.data[apply(num.data, 1, sd, na.rm=TRUE) != 0,]
+## calculate variance by row (gene)
+var <- apply(num.data, 1, sd, na.rm=TRUE)
+## adjust cut off according to variance percentile
+pca.data <- num.data[var > quantile(var, 0.95) & var != 0,]
+pca <- prcomp(t(pca.data),scale = TRUE,center = TRUE)
+scores <- data.frame(colnames(pca.data), pca$x[,1:ncol(pca$x)],group)
+#scores$fmt <- as.factor(sapply(strsplit(x = as.character(scores$group), split = "[_]"),"[",2))
+#scores$day <- as.factor(sapply(strsplit(x = as.character(scores$group), split = "[_]"),"[",3))
+
+
+library(RColorBrewer) 
+library(ggplot2)
+library(grid)
+source("../../../HIO_Ecoli_paper/DOC/eLife/src/ggplot2-themes.R")
+source("../../../HIO_Ecoli_paper/DOC/eLife/src/custom_fun.R")
+plot <- ggplot(data = scores, aes(x = PC1, y = PC2, fill = group)) +
+    scale_fill_brewer(palette = "Set1") +
+    theme1 + 
+    theme(legend.position = "right",
+          legend.background = element_rect(colour = "white"),
+          legend.key = element_rect(color = "white", fill = "white")) +
+    coord_fixed(ratio = 1) +
+    geom_hline(yintercept = 0,
+               size = 1, linetype = "dashed", color = "grey70") +
+    geom_vline(xintercept = 0,
+               size = 1, linetype = "dashed", color = "grey70") +
+    geom_point(shape = 21, size = 14, color = "white", stroke = 2) +
+    xlab(paste("PC1 (",percent(round(summary(pca)$importance[2,1],4)),")",sep = "")) +
+    ylab(paste("PC2 (",percent(round(summary(pca)$importance[2,2],4)),")",sep = "")) +
+    guides(fill = guide_legend(title = "", nrow = 5, byrow=TRUE, order =1))
+
+
+
+print(plot)
+                                  
+ #+end_src
+
+ #+RESULTS:
+ [[file:../results/figure3/PCA_analysis-hPSC.png]]
+
+
+** Export counts3
+#+begin_src R :session *R* :results silent :exports code :eval yes
+## export complete dataset with DESeq2
+## create directory to deposit results
+## create directory to deposit results
+data.dir <- "../results/figure3"
+dir.create(path = data.dir, recursive = TRUE)
+
+## read in table with sample metadata
+samples <- readr::read_csv(file = file.path(data.dir,"AJMsample_key.csv"))
+samples <- samples[grep("progenitor|uncultured|patterned|bud tip|hPSC|enteroid", samples$sample_name),]
+
+## setup access to kallisto read files
+files <- file.path(samples$directory,
+                   samples$file_name,
+                   "abundance.h5") 
+
+## set sample names as description_rep#_seq_rep#
+names(files) <- samples$short_name
+## check that all files are found
+if (all(file.exists(files)) == FALSE) {
+    print("kallisto files not found")
+    stop()
+}
+
+## associate transcripts with gene IDs
+## create biomart reference
+mart <- biomaRt::useMart(biomart = "ENSEMBL_MART_ENSEMBL",
+  dataset = "hsapiens_gene_ensembl",
+  host = 'ensembl.org')
+## create index of gene names
+tx2gene <- biomaRt::getBM(attributes = c("ensembl_transcript_id",
+                                         "external_gene_name"),
+                          mart = mart)
+## import kallisto data and generate count dataframe (dds)
+## http://bioconductor.org/packages/release/bioc/vignettes/tximport/inst/doc/tximport.html
+library(readr)
+txi <- tximport::tximport(files, type = "kallisto", tx2gene = tx2gene)
+
+library(DESeq2)
+## https://bioconductor.org/packages/devel/bioc/vignettes/DESeq2/inst/doc/DESeq2.html
+dds <- DESeq2::DESeqDataSetFromTximport(txi,
+                                        colData = samples,
+                                        design = ~ code_name)
+## pre-filter out counts < 1
+dds <- dds[rowSums(counts(dds)) > 1, ]
+
+## write out normalized expression counts
+dds <- DESeq2::estimateSizeFactors(dds)
+ddscounts <- DESeq2::counts(dds, normalized = TRUE)
+
+## write expression matrix to file
+write.csv(ddscounts, file =  file.path(data.dir, "complete-dataset_DESeq2-normalized-hPSC-enteroid-OG.csv"))
+save(dds, file = file.path(data.dir, "dds.Rdata"))
+rm(list = ls())
+#+end_src
+
+
+*** PCA
+  #+begin_src R :session *R* :exports both :results graphics :file ../results/figure3/PCA_analysis-hPSC&enteroids.png  :width 1000 :height 1000 :eval yes :tangle figure1b.R
+## TSNE analysis ----------------------------------------------------------------
+##http://distill.pub/2016/misread-tsne/
+## PCA analysis ------------------------------------------------------
+## Load dataset from file
+data.dir <- "../results/figure3"
+df <- readr::read_csv(file = file.path(data.dir,"complete-dataset_DESeq2-normalized-hPSC-enteroid-OG.csv"))
+
+## rename for SeqRetriever compatibility
+
+num.data <- df[,sapply(df,is.numeric)]
+samples <- readr::read_csv(file = file.path(data.dir,"AJMsample_key.csv"))
+samples <- samples[grep("progenitor|uncultured|patterned|bud tip|enteroid|hPSC", samples$sample_name),]
+group <- samples$sample_name
+## pca.data <- num.data[apply(num.data, 1, sd, na.rm=TRUE) != 0,]
+## calculate variance by row (gene)
+var <- apply(num.data, 1, sd, na.rm=TRUE)
+## adjust cut off according to variance percentile
+pca.data <- num.data[var > quantile(var, 0.9) & var != 0,]
+pca <- prcomp(t(pca.data),scale = TRUE,center = TRUE)
+scores <- data.frame(colnames(pca.data), pca$x[,1:ncol(pca$x)],group)
+#scores$fmt <- as.factor(sapply(strsplit(x = as.character(scores$group), split = "[_]"),"[",2))
+#scores$day <- as.factor(sapply(strsplit(x = as.character(scores$group), split = "[_]"),"[",3))
+
+
+library(RColorBrewer) 
+library(ggplot2)
+library(grid)
+source("../../../HIO_Ecoli_paper/DOC/eLife/src/ggplot2-themes.R")
+source("../../../HIO_Ecoli_paper/DOC/eLife/src/custom_fun.R")
+plot <- ggplot(data = scores, aes(x = PC1, y = PC2, fill = group)) +
+    scale_fill_brewer(palette = "Set1") +
+    theme1 + 
+    theme(legend.position = "right",
+          legend.background = element_rect(colour = "white"),
+          legend.key = element_rect(color = "white", fill = "white")) +
+    coord_fixed(ratio = 1) +
+    geom_hline(yintercept = 0,
+               size = 1, linetype = "dashed", color = "grey70") +
+    geom_vline(xintercept = 0,
+               size = 1, linetype = "dashed", color = "grey70") +
+    geom_point(shape = 21, size = 14, color = "white", stroke = 2) +
+    xlab(paste("PC1 (",percent(round(summary(pca)$importance[2,1],4)),")",sep = "")) +
+    ylab(paste("PC2 (",percent(round(summary(pca)$importance[2,2],4)),")",sep = "")) +
+    guides(fill = guide_legend(title = "", nrow = 6, byrow=TRUE, order =1))
+
+
+
+print(plot)
+                                  
+  #+end_src
+
+  #+RESULTS:
+  [[file:../results/figure3/PCA_analysis-hPSC&enteroids.png]]
+
+
+** Export counts 4
+#+begin_src R :session *R* :results silent :exports code :eval yes
+## export complete dataset with DESeq2
+## create directory to deposit results
+## create directory to deposit results
+data.dir <- "../results/figure3"
+dir.create(path = data.dir, recursive = TRUE)
+
+## read in table with sample metadata
+samples <- readr::read_csv(file = file.path(data.dir,"AJMsample_key.csv"))
+samples <- samples[grep("progenitor|patterned|bud tip|hPSC|enteroid", samples$sample_name),]
+
+## setup access to kallisto read files
+files <- file.path(samples$directory,
+                   samples$file_name,
+                   "abundance.h5") 
+
+## set sample names as description_rep#_seq_rep#
+names(files) <- samples$short_name
+## check that all files are found
+if (all(file.exists(files)) == FALSE) {
+    print("kallisto files not found")
+    stop()
+}
+
+## associate transcripts with gene IDs
+## create biomart reference
+mart <- biomaRt::useMart(biomart = "ENSEMBL_MART_ENSEMBL",
+  dataset = "hsapiens_gene_ensembl",
+  host = 'ensembl.org')
+## create index of gene names
+tx2gene <- biomaRt::getBM(attributes = c("ensembl_transcript_id",
+                                         "external_gene_name"),
+                          mart = mart)
+## import kallisto data and generate count dataframe (dds)
+## http://bioconductor.org/packages/release/bioc/vignettes/tximport/inst/doc/tximport.html
+library(readr)
+txi <- tximport::tximport(files, type = "kallisto", tx2gene = tx2gene)
+
+library(DESeq2)
+## https://bioconductor.org/packages/devel/bioc/vignettes/DESeq2/inst/doc/DESeq2.html
+dds <- DESeq2::DESeqDataSetFromTximport(txi,
+                                        colData = samples,
+                                        design = ~ code_name)
+## pre-filter out counts < 1
+dds <- dds[rowSums(counts(dds)) > 1, ]
+
+## write out normalized expression counts
+dds <- DESeq2::estimateSizeFactors(dds)
+ddscounts <- DESeq2::counts(dds, normalized = TRUE)
+
+## write expression matrix to file
+write.csv(ddscounts, file =  file.path(data.dir, "complete-dataset_DESeq2-normalized-hPSC-enteroid-OG-noULB.csv"))
+save(dds, file = file.path(data.dir, "dds.Rdata"))
+rm(list = ls())
+#+end_src
+
+
+*** tSNE
+  #+begin_src R :session *R* :exports both :results graphics :file ../results/figure3/tSNE_analysis-hPSC&enteroids-noULB.png  :width 1000 :height 1000 :eval yes :tangle figure1b.R
+## TSNE analysis ----------------------------------------------------------------
+##http://distill.pub/2016/misread-tsne/
+## PCA analysis ------------------------------------------------------
+## Load dataset from file
+data.dir <- "../results/figure3"
+df <- readr::read_csv(file = file.path(data.dir,"complete-dataset_DESeq2-normalized-hPSC-enteroid-OG-noULB.csv"))
+
+## rename for SeqRetriever compatibility
+
+num.data <- df[,sapply(df,is.numeric)]
+samples <- readr::read_csv(file = file.path(data.dir,"AJMsample_key.csv"))
+samples <- samples[grep("progenitor|patterned|bud tip|hPSC|enteroid", samples$sample_name),]
+group <- samples$sample_name
+## pca.data <- num.data[apply(num.data, 1, sd, na.rm=TRUE) != 0,]
+## calculate variance by row (gene)
+var <- apply(num.data, 1, sd, na.rm=TRUE)
+## adjust cut off according to variance percentile
+pca.data <- num.data[var > quantile(var, 0.1) & var != 0,]#0.8
+#pca <- prcomp(t(pca.data),scale = TRUE,center = TRUE)
+#scores <- data.frame(colnames(pca.data), pca$x[,1:ncol(pca$x)],group)
+
+
+library(Rtsne)
+set.seed(3210)
+tsne <- Rtsne(as.matrix(unique(t(pca.data))),
+              dims = 2,
+	      perplexity = 6,
+              theta = 0.5)
+scores <- data.frame(tsne$Y,group)
+
+library(RColorBrewer) 
+library(ggplot2)
+library(grid)
+source("../../../HIO_Ecoli_paper/DOC/eLife/src/ggplot2-themes.R")
+source("../../../HIO_Ecoli_paper/DOC/eLife/src/custom_fun.R")
+plot <- ggplot(data = scores, aes(x = X1, y = X2, fill = factor(group))) +
+#plot <- ggplot(data = scores, aes(x = PC1, y = PC2, fill = group)) +
+    scale_fill_brewer(palette = "Set1") +
+    theme1 + 
+    theme(legend.position = "right",
+          legend.background = element_rect(colour = "white"),
+          legend.key = element_rect(color = "white", fill = "white")) +
+    coord_fixed(ratio = 1) +
+    geom_hline(yintercept = 0,
+               size = 1, linetype = "dashed", color = "grey70") +
+    geom_vline(xintercept = 0,
+               size = 1, linetype = "dashed", color = "grey70") +
+    geom_point(shape = 21, size = 14, color = "white", stroke = 2) +
+  #  xlab(paste("PC1 (",percent(round(summary(pca)$importance[2,1],4)),")",sep = "")) +
+  #  ylab(paste("PC2 (",percent(round(summary(pca)$importance[2,2],4)),")",sep = "")) +
+    guides(fill = guide_legend(title = "", nrow = 6, byrow=TRUE, order =1))
+
+
+
+print(plot)
+                                  
+  #+end_src
+
+  #+RESULTS:
+  [[file:../results/figure3/tSNE_analysis-hPSC&enteroids-noULB.png]]
+
+*** PCA
+  #+begin_src R :session *R* :exports both :results graphics :file ../results/figure3/PCA_analysis-hPSC&enteroids-noULB.png  :width 1000 :height 1000 :eval yes :tangle figure1b.R
+## TSNE analysis ----------------------------------------------------------------
+##http://distill.pub/2016/misread-tsne/
+## PCA analysis ------------------------------------------------------
+## Load dataset from file
+data.dir <- "../results/figure3"
+df <- readr::read_csv(file = file.path(data.dir,"complete-dataset_DESeq2-normalized-hPSC-enteroid-OG-noULB.csv"))
+
+## rename for SeqRetriever compatibility
+
+num.data <- df[,sapply(df,is.numeric)]
+samples <- readr::read_csv(file = file.path(data.dir,"AJMsample_key.csv"))
+samples <- samples[grep("progenitor|patterned|bud tip|hPSC|enteroid", samples$sample_name),]
+group <- samples$cell_line
+## pca.data <- num.data[apply(num.data, 1, sd, na.rm=TRUE) != 0,]
+## calculate variance by row (gene)
+var <- apply(num.data, 1, sd, na.rm=TRUE)
+## adjust cut off according to variance percentile
+pca.data <- num.data[var > quantile(var, 0.99) & var != 0,]#0.8
+pca <- prcomp(t(pca.data),scale = TRUE,center = TRUE)
+scores <- data.frame(colnames(pca.data), pca$x[,1:ncol(pca$x)],group)
+
+library(magrittr)
+df.top <- df[var > quantile(var, 0.99) & var != 0,] %>% dplyr::rename(SYMBOL = X1)
+write.csv(df.top, file = file.path(data.dir, "top_1pct_sd_hPSC-enteroid-OG-noULB.csv"))
+
+library(RColorBrewer) 
+library(ggplot2)
+library(grid)
+source("../../../HIO_Ecoli_paper/DOC/eLife/src/ggplot2-themes.R")
+source("../../../HIO_Ecoli_paper/DOC/eLife/src/custom_fun.R")
+
+plot <- ggplot(data = scores, aes(x = PC1, y = PC2, fill = group)) +
+    scale_fill_brewer(palette = "Set1") +
+    theme1 + 
+    theme(legend.position = "right",
+          legend.background = element_rect(colour = "white"),
+          legend.key = element_rect(color = "white", fill = "white")) +
+    coord_fixed(ratio = 1) +
+    geom_hline(yintercept = 0,
+               size = 1, linetype = "dashed", color = "grey70") +
+    geom_vline(xintercept = 0,
+               size = 1, linetype = "dashed", color = "grey70") +
+    geom_point(shape = 21, size = 14, color = "white", stroke = 2) +
+    xlab(paste("PC1 (",percent(round(summary(pca)$importance[2,1],4)),")",sep = "")) +
+    ylab(paste("PC2 (",percent(round(summary(pca)$importance[2,2],4)),")",sep = "")) +
+    guides(fill = guide_legend(title = "", nrow = 6, byrow=TRUE, order =1))
+
+
+
+print(plot)
+                                  
+  #+end_src
+
+  #+RESULTS:
+  [[file:../results/figure3/PCA_analysis-hPSC&enteroids-noULB.png]]
+
+
+** GO over-enrichment test
+#+begin_src R :session *R* :results silent :exports code :eval yes
+## Load dataset from file
+data.dir <- "../results/figure3"
+df <- readr::read_csv(file = file.path(data.dir,"complete-dataset_DESeq2-normalized-hPSC-enteroid-OG-noULB.csv"))
+df.top <- readr::read_csv(file = file.path(data.dir, "top_1pct_sd_hPSC-enteroid-OG-noULB.csv"))
+
+library(clusterProfiler)
+library(org.Hs.eg.db)
+
+top.ids <- bitr(df.top$SYMBOL,
+               fromType = "SYMBOL",
+               toType = "ENTREZID",
+               OrgDb = "org.Hs.eg.db")
+
+## background gene set
+all.ids <- bitr(df$X1,
+                fromType = "SYMBOL",
+                toType = "ENTREZID",
+                OrgDb = "org.Hs.eg.db")
+
+## over-representation test, Up-regualted
+go.ec <- enrichGO(gene = top.ids$ENTREZID,
+                  universe = all.ids$ENTREZID,
+                  OrgDb = "org.Hs.eg.db",
+                  ont = "BP",
+                  pAdjustMethod = "none",
+                  pvalueCutoff = 0.05,
+                  qvalueCutoff = 0.05,
+                  readable = TRUE)
+
+write.csv(go.ec@result, file = file.path(data.dir, "top_1pct_GO.csv"))
+
+library(ReactomePA)
+reactome.ec <- enrichPathway(gene = top.ids$ENTREZID,
+                     # organism = 'hsa',
+                      pvalueCutoff = 0.05, readable = TRUE)
+write.csv(reactome.ec@result, file = file.path(data.dir, "top_1pct_REACTOME.csv"))
+
+#+end_src
+
+
+** Export counts 5
+#+begin_src R :session *R* :results silent :exports code :eval yes
+## export complete dataset with DESeq2
+## create directory to deposit results
+## create directory to deposit results
+data.dir <- "../results/figure3"
+dir.create(path = data.dir, recursive = TRUE)
+
+## read in table with sample metadata
+samples <- readr::read_csv(file = file.path(data.dir,"AJMsample_key.csv"))
+samples <- samples[-grep("enteroid", samples$sample_name),]
+
+## setup access to kallisto read files
+files <- file.path(samples$directory,
+                   samples$file_name,
+                   "abundance.h5") 
+
+## set sample names as description_rep#_seq_rep#
+names(files) <- samples$short_name
+## check that all files are found
+if (all(file.exists(files)) == FALSE) {
+    print("kallisto files not found")
+    stop()
+}
+
+## associate transcripts with gene IDs
+## create biomart reference
+mart <- biomaRt::useMart(biomart = "ENSEMBL_MART_ENSEMBL",
+  dataset = "hsapiens_gene_ensembl",
+  host = 'ensembl.org')
+## create index of gene names
+tx2gene <- biomaRt::getBM(attributes = c("ensembl_transcript_id",
+                                         "external_gene_name"),
+                          mart = mart)
+## import kallisto data and generate count dataframe (dds)
+## http://bioconductor.org/packages/release/bioc/vignettes/tximport/inst/doc/tximport.html
+library(readr)
+txi <- tximport::tximport(files, type = "kallisto", tx2gene = tx2gene)
+
+library(DESeq2)
+## https://bioconductor.org/packages/devel/bioc/vignettes/DESeq2/inst/doc/DESeq2.html
+dds <- DESeq2::DESeqDataSetFromTximport(txi,
+                                        colData = samples,
+                                        design = ~ code_name)
+## pre-filter out counts < 1
+dds <- dds[rowSums(counts(dds)) > 1, ]
+
+## write out normalized expression counts
+dds <- DESeq2::estimateSizeFactors(dds)
+ddscounts <- DESeq2::counts(dds, normalized = TRUE)
+
+## write expression matrix to file
+write.csv(ddscounts, file =  file.path(data.dir, "complete-dataset_DESeq2-normalized-all.csv"))
+save(dds, file = file.path(data.dir, "dds.Rdata"))
+rm(list = ls())
+#+end_src
+
+
+*** tSNE
+  #+begin_src R :session *R* :exports both :results graphics :file ../results/figure3/tSNE_analysis-all.png  :width 1000 :height 1000 :eval yes :tangle figure1b.R
+## TSNE analysis ----------------------------------------------------------------
+##http://distill.pub/2016/misread-tsne/
+## PCA analysis ------------------------------------------------------
+## Load dataset from file
+data.dir <- "../results/figure3"
+df <- readr::read_csv(file = file.path(data.dir,"complete-dataset_DESeq2-normalized-all.csv"))
+
+## rename for SeqRetriever compatibility
+
+num.data <- df[,sapply(df,is.numeric)]
+samples <- readr::read_csv(file = file.path(data.dir,"AJMsample_key.csv"))
+#samples <- samples[grep("progenitor|patterned|bud tip|hPSC|enteroid", samples$sample_name),]
+#group <- samples$sample_name
+group <- samples$cell_line
+## pca.data <- num.data[apply(num.data, 1, sd, na.rm=TRUE) != 0,]
+## calculate variance by row (gene)
+var <- apply(num.data, 1, sd, na.rm=TRUE)
+## adjust cut off according to variance percentile
+pca.data <- num.data[var > quantile(var, 0.9) & var != 0,]#0.8
+#pca <- prcomp(t(pca.data),scale = TRUE,center = TRUE)
+#scores <- data.frame(colnames(pca.data), pca$x[,1:ncol(pca$x)],group)
+
+
+library(Rtsne)
+set.seed(3210)
+tsne <- Rtsne(as.matrix(unique(t(pca.data))),
+              dims = 2,
+	      perplexity = 6,
+              theta = 0.5)
+scores <- data.frame(tsne$Y,group)
+
+library(RColorBrewer) 
+library(ggplot2)
+library(grid)
+source("../../../HIO_Ecoli_paper/DOC/eLife/src/ggplot2-themes.R")
+source("../../../HIO_Ecoli_paper/DOC/eLife/src/custom_fun.R")
+plot <- ggplot(data = scores, aes(x = X1, y = X2, fill = factor(group))) +
+#plot <- ggplot(data = scores, aes(x = PC1, y = PC2, fill = group)) +
+    scale_fill_brewer(palette = "Set1") +
+    theme1 + 
+    theme(legend.position = "right",
+          legend.background = element_rect(colour = "white"),
+          legend.key = element_rect(color = "white", fill = "white")) +
+    coord_fixed(ratio = 1) +
+    geom_hline(yintercept = 0,
+               size = 1, linetype = "dashed", color = "grey70") +
+    geom_vline(xintercept = 0,
+               size = 1, linetype = "dashed", color = "grey70") +
+    geom_point(shape = 21, size = 14, color = "white", stroke = 2) +
+  #  xlab(paste("PC1 (",percent(round(summary(pca)$importance[2,1],4)),")",sep = "")) +
+  #  ylab(paste("PC2 (",percent(round(summary(pca)$importance[2,2],4)),")",sep = "")) +
+    guides(fill = guide_legend(title = "", nrow = 10, byrow=TRUE, order =1))
+
+
+
+print(plot)
+                                  
+  #+end_src
+
+  #+RESULTS:
+  [[file:../results/figure3/tSNE_analysis-all.png]]
+
+*** PCA
+  #+begin_src R :session *R* :exports both :results graphics :file ../results/figure3/PCA_analysis-all.png  :width 2000 :height 2000 :eval yes :tangle figure1b.R
+## TSNE analysis ----------------------------------------------------------------
+##http://distill.pub/2016/misread-tsne/
+## PCA analysis ------------------------------------------------------
+## Load dataset from file
+data.dir <- "../results/figure3"
+df <- readr::read_csv(file = file.path(data.dir,"complete-dataset_DESeq2-normalized-all.csv"))
+
+## rename for SeqRetriever compatibility
+
+num.data <- df[,sapply(df,is.numeric)]
+samples <- readr::read_csv(file = file.path(data.dir,"AJMsample_key.csv"))
+samples <- samples[-grep("enteroid", samples$sample_name),]
+#group <- samples$cell_line
+group <- samples$sample_name
+## pca.data <- num.data[apply(num.data, 1, sd, na.rm=TRUE) != 0,]
+## calculate variance by row (gene)
+var <- apply(num.data, 1, sd, na.rm=TRUE)
+## adjust cut off according to variance percentile
+pca.data <- num.data[var > quantile(var, 0.1) & var != 0,]#0.8
+pca <- prcomp(t(pca.data),scale = TRUE,center = TRUE)
+scores <- data.frame(colnames(pca.data), pca$x[,1:ncol(pca$x)],group)
+
+library(magrittr)
+#df.top <- df[var > quantile(var, 0.99) & var != 0,] %>% dplyr::rename(SYMBOL = X1)
+#write.csv(df.top, file = file.path(data.dir, "top_1pct_sd_hPSC-enteroid-OG-noULB.csv"))
+
+library(RColorBrewer) 
+library(ggplot2)
+library(grid)
+source("../../../HIO_Ecoli_paper/DOC/eLife/src/ggplot2-themes.R")
+source("../../../HIO_Ecoli_paper/DOC/eLife/src/custom_fun.R")
+
+plot <- ggplot(data = scores, aes(x = PC1, y = PC2, fill = group)) +
+    scale_fill_brewer(palette = "Set1") +
+    theme1 + 
+    theme(legend.position = "right",
+          legend.background = element_rect(colour = "white"),
+          legend.key = element_rect(color = "white", fill = "white")) +
+    coord_fixed(ratio = 1) +
+    geom_hline(yintercept = 0,
+               size = 1, linetype = "dashed", color = "grey70") +
+    geom_vline(xintercept = 0,
+               size = 1, linetype = "dashed", color = "grey70") +
+    geom_point(shape = 21, size = 14, color = "white", stroke = 2) +
+    xlab(paste("PC1 (",percent(round(summary(pca)$importance[2,1],4)),")",sep = "")) +
+    ylab(paste("PC2 (",percent(round(summary(pca)$importance[2,2],4)),")",sep = "")) +
+    guides(fill = guide_legend(title = "", nrow = 10, byrow=TRUE, order =1))
+
+plot2 <- ggplot(data = scores, aes(x = PC1, y = PC3, fill = group)) +
+    scale_fill_brewer(palette = "Set1") +
+    theme1 + 
+    theme(legend.position = "right",
+          legend.background = element_rect(colour = "white"),
+          legend.key = element_rect(color = "white", fill = "white")) +
+    coord_fixed(ratio = 1) +
+    geom_hline(yintercept = 0,
+               size = 1, linetype = "dashed", color = "grey70") +
+    geom_vline(xintercept = 0,
+               size = 1, linetype = "dashed", color = "grey70") +
+    geom_point(shape = 21, size = 14, color = "white", stroke = 2) +
+    xlab(paste("PC1 (",percent(round(summary(pca)$importance[2,1],4)),")",sep = "")) +
+    ylab(paste("PC3 (",percent(round(summary(pca)$importance[2,3],4)),")",sep = "")) +
+    guides(fill = guide_legend(title = "", nrow = 10, byrow=TRUE, order =1))
+
+plot3 <- ggplot(data = scores, aes(x = PC2, y = PC3, fill = group)) +
+    scale_fill_brewer(palette = "Set1") +
+    theme1 + 
+    theme(legend.position = "right",
+          legend.background = element_rect(colour = "white"),
+          legend.key = element_rect(color = "white", fill = "white")) +
+    coord_fixed(ratio = 1) +
+    geom_hline(yintercept = 0,
+               size = 1, linetype = "dashed", color = "grey70") +
+    geom_vline(xintercept = 0,
+               size = 1, linetype = "dashed", color = "grey70") +
+    geom_point(shape = 21, size = 14, color = "white", stroke = 2) +
+    xlab(paste("PC2 (",percent(round(summary(pca)$importance[2,2],4)),")",sep = "")) +
+    ylab(paste("PC3 (",percent(round(summary(pca)$importance[2,3],4)),")",sep = "")) +
+    guides(fill = guide_legend(title = "", nrow = 10, byrow=TRUE, order =1))
+
+
+
+library(gridExtra)
+grid.arrange(plot, plot2, plot3, nrow = 2)
+                                  
+  #+end_src
+
+  #+RESULTS:
+  [[file:../results/figure3/PCA_analysis-all.png]]
+
+
+#+begin_src R :session *R* :exports both :results graphics :file ../results/figure3/3D_PCA_analysis-all.pdf  :width 7 :height 7 :eval yes :tangle figure1b.R
+scores$color <- c(rep("#52B14F", times = 6),
+                  rep("#3C81BA", times = 3),
+                  rep("#7F7F7F", times = 3), #grey
+                  rep("#E42022", times = 6),
+                  rep("#3C81BA", times = 1),
+                  rep("#FF8207", times = 3),
+                  rep("#9B53A5", times = 3),
+                  rep("#A85A2E", times = 3))
+library(scatterplot3d)
+scatterplot3d(scores$PC1,scores$PC2,scores$PC3, 
+              bg = scores$color, color = scores$color, type = "h",
+              pch = 21, 
+	      grid = TRUE, 
+	      angle = 45, 
+	      axis = TRUE,
+              cex.symbols = 4,
+              xlab = "PC1", ylab = "PC2", zlab = "PC3",
+              lty.axis = 1, 
+	      lty.hide = 1, 
+	      tick.marks = TRUE,
+	      lwd = 2,
+	      lty.hplot = 2
+	      )
+#+end_src
+
+#+RESULTS:
+[[file:../results/figure3/3D_PCA_analysis-all.pdf]]
+
+*** Pearson's correlation
+#+begin_src R :session *R* :exports both :results graphics :file ../results/figure3/Correlation_analysis.png :width 1000 :height 1000 :eval yes
+## Load dataset from file
+data.dir <- "../results/figure3"
+df <- readr::read_csv(file = file.path(data.dir,"complete-dataset_DESeq2-normalized-all.csv"))
+
+## rename for SeqRetriever compatibility
+
+num.data <- df[,sapply(df,is.numeric)]
+samples <- readr::read_csv(file = file.path(data.dir,"AJMsample_key.csv"))
+samples <- samples[-grep("enteroid", samples$sample_name),]
+#group <- samples$cell_line
+group <- samples$sample_name
+## pca.data <- num.data[apply(num.data, 1, sd, na.rm=TRUE) != 0,]
+## calculate variance by row (gene)
+var <- apply(num.data, 1, sd, na.rm=TRUE)
+## adjust cut off according to variance percentile
+pca.data <- num.data[var > quantile(var, 0.1) & var != 0,]#0.8
+colnames(pca.data) <- paste0(samples$sample_name," ", samples$replicate)
+cor1 <- cor(pca.data, method = "pearson")
+## determine order for axis clustering
+library(magrittr)
+library(ggtree)
+library(ape)
+tree <- dist(cor1, method = "euclidean") %>% hclust(method = "mcquitty") %>% as.phylo
+plot <- ggplot(tree) + geom_tree(size = 3) + theme_tree() + geom_tiplab(size = 4)
+
+library(gtable)
+library(ggplot2)
+library(grid)
+source("../../../HIO_Ecoli_paper/DOC/eLife/src/ggplot2-themes.R")
+source("../../../HIO_Ecoli_paper/DOC/eLife/src/custom_fun.R")
+
+## Correlation matrix
+ord <- hclust(dist(cor1, method = "euclidean"), method = "ward.D")$order
+melted_cormat <- reshape2::melt(cor1[ord,ord])
+figure <- ggplot(data = melted_cormat, aes(x = Var1, y = Var2, fill=value)) + 
+##  geom_tile(color = "grey", size = 0.5) +  # add tiles?
+    geom_tile() +
+    scale_fill_distiller(expression(paste(italic(r))),palette = "RdBu", direction = -1) +
+    xlab("") + ylab("") + coord_fixed(ratio = 1) + theme1 +
+    theme(axis.text = element_text(size = 18, face ="bold"),
+          axis.text.x = element_text(angle = 45, vjust = 1, hjust = 1),
+          legend.title = element_text(size = 18, face ="bold"),
+	  panel.background = element_rect(fill = "white"),
+	  panel.border = element_blank(),
+          legend.text = element_text(size = 12, face ="bold"),
+	  legend.position = "right")
+
+print(figure)
+#+end_src
+
+#+RESULTS:
+[[file:../results/figure3/Correlation_analysis.png]]
+
+#+begin_src R :session *R* :exports both :results graphics :file ../results/figure3/Correlation_analysis_tree.png :width 1000 :height 1000 :eval yes
+library(magrittr)
+library(ggtree)
+#library(ape)
+## the distance measure to be used. This must be one of
+##           ‘"euclidean"’, ‘"maximum"’, ‘"manhattan"’, ‘"canberra"’,
+##           ‘"binary"’ or ‘"minkowski"’.  Any unambiguous substring can
+##           be given.
+## the agglomeration method to be used.  This should be (an
+##           unambiguous abbreviation of) one of ‘"ward.D"’, ‘"ward.D2"’,
+##           ‘"single"’, ‘"complete"’, ‘"average"’ (= UPGMA), ‘"mcquitty"’
+##           (= WPGMA), ‘"median"’ (= WPGMC) or ‘"centroid"’ (= UPGMC).
+tree <- dist(cor1, method = "euclidean") %>% hclust(method = "ward.D") %>% as.phylo
+plot <- ggplot(tree) + geom_tree(size = 3) + theme_tree() + geom_tiplab(size = 5, hjust = 1, offset = 0.65)
+print(plot)
+#+end_src
+
+#+RESULTS:
+[[file:../results/figure3/Correlation_analysis_tree.png]]
+
+** heatmaps  
+*** Export counts 6
+ #+begin_src R :session *R* :results silent :exports code :eval yes
+## export complete dataset with DESeq2
+## create directory to deposit results
+## create directory to deposit results
+data.dir <- "../results/figure3"
+dir.create(path = data.dir, recursive = TRUE)
+
+## read in table with sample metadata
+samples <- readr::read_csv(file = file.path(data.dir,"AJMsample_key.csv"))
+samples <- samples[grep("progenitor|patterned|bud tip|fetal", samples$sample_name),]
+samples <- samples[-grep("uncultured", samples$sample_name),]
+
+## setup access to kallisto read files
+files <- file.path(samples$directory,
+                   samples$file_name,
+                   "abundance.h5") 
+
+## set sample names as description_rep#_seq_rep#
+names(files) <- samples$short_name
+## check that all files are found
+if (all(file.exists(files)) == FALSE) {
+    print("kallisto files not found")
+    stop()
+}
+
+## associate transcripts with gene IDs
+## create biomart reference
+mart <- biomaRt::useMart(biomart = "ENSEMBL_MART_ENSEMBL",
+  dataset = "hsapiens_gene_ensembl",
+  host = 'ensembl.org')
+## create index of gene names
+tx2gene <- biomaRt::getBM(attributes = c("ensembl_transcript_id",
+                                         "external_gene_name"),
+                          mart = mart)
+## import kallisto data and generate count dataframe (dds)
+## http://bioconductor.org/packages/release/bioc/vignettes/tximport/inst/doc/tximport.html
+library(readr)
+txi <- tximport::tximport(files, type = "kallisto", tx2gene = tx2gene)
+
+library(DESeq2)
+## https://bioconductor.org/packages/devel/bioc/vignettes/DESeq2/inst/doc/DESeq2.html
+dds <- DESeq2::DESeqDataSetFromTximport(txi,
+                                        colData = samples,
+                                        design = ~ code_name)
+## pre-filter out counts < 1
+dds <- dds[rowSums(counts(dds)) > 0.1, ]
+
+## write out normalized expression counts
+dds <- DESeq2::estimateSizeFactors(dds)
+ddscounts <- DESeq2::counts(dds, normalized = TRUE)
+
+## write expression matrix to file
+write.csv(ddscounts, file =  file.path(data.dir, "complete-dataset_DESeq2-normalized-lung.csv"))
+save(dds, file = file.path(data.dir, "dds.Rdata"))
+rm(list = ls())
+ #+end_src
+
+*** setup data input 
+#+begin_src R :session *R* :results silent :exports code :eval yes
+
+library(magrittr)
+data.dir <- "../results/figure3"
+## read in table with sample metadata
+samples <- readr::read_csv(file = file.path(data.dir,"AJMsample_key.csv"))
+samples <- samples[grep("progenitor|patterned|bud tip|fetal", samples$sample_name),]
+samples <- samples[-grep("uncultured", samples$sample_name),]
+
+
+## Load dataset from file
+df <- readr::read_csv(file = file.path(data.dir, "complete-dataset_DESeq2-normalized-lung.csv")) %>% dplyr::rename(SYMBOL = X1)
+
+df.tidy <- df %>% tidyr::gather(short_name, count, -SYMBOL) %>%
+    dplyr::left_join(samples, by = 'short_name') %>%
+    dplyr::select(SYMBOL, sample_name, count)
+
+## mean by condition
+df.tidy.mean <- df.tidy %>% dplyr::group_by(sample_name, SYMBOL) %>%
+    dplyr::summarise(mean = mean(count),
+                     var_sd = sd(count),
+                     num = n())
+
+scale_this <- function(x) as.vector(scale(x))
+
+data.scaled <- df.tidy.mean %>% dplyr::group_by(SYMBOL) %>%
+    dplyr::mutate(zscore = scale_this(mean))
+
+genes <- readr::read_csv(file = "../results/heatmaps/GenesofInterestRNAseq.csv") %>% dplyr::rename(SYMBOL = gene)
+dat.out <- df[which(df$SYMBOL %in% genes$SYMBOL),]
+dat.out <- df[which(df$SYMBOL %in% genes$SYMBOL[grep("SFTPB|SCGB3A2",genes$SYMBOL, invert = TRUE)]),]
+colnames(dat.out) <- c("SYMBOL", make.unique(samples$sample_name))
+#hm.data <- data.scaled[which(data.scaled$SYMBOL %in% genes$SYMBOL),] %>% dplyr::left_join(genes, by = 'SYMBOL')
+hm.data <- data.scaled[which(data.scaled$SYMBOL %in%
+                             genes$SYMBOL[grep("SFTPB|SCGB3A2",genes$SYMBOL, invert = TRUE)]),] %>%
+    dplyr::left_join(genes, by = 'SYMBOL')
+write.csv(hm.data, file = file.path(data.dir,"cell-lineage_lungs_TPM.csv"))
+write.csv(dat.out, file = file.path(data.dir,"cell-lineage_lungs_TPM_wide_format.csv"))
+  #+end_src
+** plots
+
+#+begin_src R :session *R* :exports both :results graphics :file ../results/figure3/cell-lineage_lungs.pdf :width 3.25 :height 13 :eval yes
+
+library(ggplot2)
+source("../../../HIO_Ecoli_paper/DOC/eLife/src/ggplot2-themes.R")
+
+## subset to final set of genes
+#final.cut <- c("SOX9", "SOX2", "MYCN", "ID2", "ETV4", "ETV5", "SPRY2", "SPRY4", "KRT5", "TP63", "SCBG1A1", "AGER", "ABCA3", "SFTPC", "PDPN", "HOPX")
+#hm.data <- hm.data[which(hm.data$SYMBOL %in% final.cut),]
+
+hm.data$sample_name <- factor(hm.data$sample_name, levels = c("fetal lung",                                                 
+                                                  "fetal progenitor organoid",
+						  "patterned lung organoid",
+						  "bud tip organoid"))
+
+dat <- dplyr::select(hm.data, sample_name, mean) %>% tidyr::spread(sample_name, mean)
+#dat <- dplyr::select(hm.data, sample_name, zscore) %>% tidyr::spread(sample_name, zscore)
+ord <- hclust(dist(dat[,2:4], method = "euclidean"), method = "ward.D")$order
+
+hm.data$SYMBOL <- factor(hm.data$SYMBOL, levels = hm.data$SYMBOL[ord])
+
+#    df <- as.data.frame(t(scale(t(df))))     
+#    ## determine order for axis clustering
+#    ord <- hclust(dist(df, method = dist.method), method = hclust.method)$order
+plot <- ggplot(data = hm.data,
+               aes(x = sample_name, y = SYMBOL)) +
+    geom_tile(stat = "identity",
+              aes(fill = log10(mean))) +
+#              aes(fill = zscore)) +
+    facet_grid(cell_lineage ~ ., scales = "free_y", space = "free", switch = "y") +
+    scale_fill_distiller(name = "Log(10) TPM ", palette = "RdBu", na.value ="#2C6CAD") +
+    scale_y_discrete(position = "right") +
+    ylab("") + xlab("") + 
+    theme1 + 
+    theme(strip.text =  element_text(size = 23),
+          legend.position = "bottom",
+	  legend.title = element_text(size = 12),
+	  legend.key.size = unit(0.5,"cm"),
+	  panel.spacing = unit(2, "lines"),
+	  axis.text.y = element_text(size = 18),
+	  axis.text.x = element_text(size = 14, angle = 90, hjust = 1, vjust = 0.5),
+	  panel.border = element_blank())
+	  
+print(plot)
+#+end_src
+
+#+RESULTS:
+[[file:../results/figure3/cell-lineage_lungs.pdf]]
+* Add new comparisons
+This will allow us to generate lists of differentially expressed genes for each group, which will be inherently useful, and will also allow us to do GSEA for to compare the groups, adding additional evidence.
+** kallisto process whole lung samples
+#+begin_src sh :tangle adult-lung.sh :eval no
+#! /bin/bash
+## KALLISTO PROCESSING SCRIPT
+DT1=$(date '+%d/%m/%Y %H:%M:%S')
+INDEX=/data/genomes/Homo_sapiens.GRCh38.rel79.cdna.all.idx
+EMAIL=d2.david.hill@gmail.com
+## This is the directory where your kallisto results will be deposited
+RESULTDIR=../results/kallisto-adult_lung/
+## make folder to deposit results
+mkdir -p $RESULTDIR
+for dir in ../data/fastq/revisions/*
+do
+    for file in $dir/*.fastq*
+    do
+    SHORTNAME=$(basename "$file")
+    NAME2="${SHORTNAME##*/}"
+    DIRNAME="${NAME2%.*}"  
+    # These settings are for single-end 50 bp reads
+    kallisto quant -i $INDEX --output-dir=$RESULTDIR/$DIRNAME --threads=8 \
+	     --bootstrap-samples=100 --single --fragment-length=50 --sd=1 $file
+    done
+done
+
+## Send email notification of script completion
+DT2=$(date '+%d/%m/%Y %H:%M:%S')
+echo "Kalliso run initiated at $DT1 complete at $DT2" | mail -s "Kallisto complete" $EMAIL
+
+#+end_src
+** Export new counts
+#+begin_src R :session *R* :results silent :exports code :eval no :tangle run-on-server.R
+## export complete dataset with DESeq2
+## create directory to deposit results
+## create directory to deposit results
+data.dir <- "../results/full-dataset"
+dir.create(path = data.dir, recursive = TRUE)
+
+## read in table with sample metadata
+samples <- readr::read_csv(file = file.path(data.dir,"AJMsample_key.csv"))
+
+## setup access to kallisto read files
+files <- file.path(samples$directory,
+                   samples$file_name,
+                   "abundance.h5") 
+
+## set sample names as description_rep#_seq_rep#
+names(files) <- samples$short_name
+## check that all files are found
+if (all(file.exists(files)) == FALSE) {
+    print("kallisto files not found")
+    stop()
+}
+
+## associate transcripts with gene IDs
+## create biomart reference
+mart <- biomaRt::useMart(biomart = "ENSEMBL_MART_ENSEMBL",
+  dataset = "hsapiens_gene_ensembl",
+  host = 'ensembl.org')
+## create index of gene names
+tx2gene <- biomaRt::getBM(attributes = c("ensembl_transcript_id",
+                                         "external_gene_name"),
+                          mart = mart)
+## import kallisto data and generate count dataframe (dds)
+## http://bioconductor.org/packages/release/bioc/vignettes/tximport/inst/doc/tximport.html
+library(readr)
+txi <- tximport::tximport(files, type = "kallisto", tx2gene = tx2gene)
+
+## export abundance counts
+write.csv(txi$abundance, file = file.path(data.dir, "complete_dataset_txi.csv"))
+
+library(DESeq2)
+## https://bioconductor.org/packages/devel/bioc/vignettes/DESeq2/inst/doc/DESeq2.html
+dds <- DESeq2::DESeqDataSetFromTximport(txi,
+                                        colData = samples,
+                                        design = ~ code_name)
+## pre-filter out counts < 1
+dds <- dds[rowSums(counts(dds)) > 1, ]
+
+## write out normalized expression counts
+dds <- DESeq2::estimateSizeFactors(dds)
+ddscounts <- DESeq2::counts(dds, normalized = TRUE)
+
+## write expression matrix to file
+write.csv(ddscounts, file =  file.path(data.dir, "complete-dataset_DESeq2-normalized-counts.csv"))
+save(dds, file = file.path(data.dir, "dds.Rdata"))
+rm(list = ls())
+#+end_src
+** DESeq2 Differential expression
+#+begin_src R :session *R* :results silent :exports code :eval no :tangle run-on-server.R
+## enable parallel processes
+library("BiocParallel")
+
+register(MulticoreParam(4))
+
+## setup multifactor design
+colData(dds)$code_name <- as.factor(colData(dds)$code_name)
+ddsMF <- dds
+DESeq2::design(ddsMF) <- ~ code_name
+
+## Likelihood ratio test (ANOVA-like)
+ddsMF <- DESeq2::DESeq(ddsMF, test = "LRT", reduced = ~1, parallel = TRUE)
+res <- DESeq2::results(ddsMF)
+write.csv(res, file = file.path(data.dir, "LRT.csv"))
+#+end_src
+#+begin_src R :session *R* :results silent :exports code :eval no :tangle run-on-server.R
+## DESeq2 differential expression output
+res <- DESeq2::results(ddsMF, test = "Wald",
+                       contrast = c("code_name", "adult_lung","lung_buds_d0"))
+write.csv(res, file = file.path(data.dir, "adult-lung_over_fresh-lung-buds.csv"))
+res <- DESeq2::results(ddsMF, test = "Wald",
+                       contrast = c("code_name", "adult_lung","lung_buds_d14"))
+write.csv(res, file = file.path(data.dir, "adult-lung_over_lung-bud-isolated-organoids.csv"))
+res <- DESeq2::results(ddsMF, test = "Wald",
+                       contrast = c("code_name", "adult_lung","HLO"))
+write.csv(res, file = file.path(data.dir, "adult-lung_over_PSC-derived-HLO.csv"))
+#+end_src
+
