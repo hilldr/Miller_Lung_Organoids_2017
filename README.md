@@ -19,7 +19,7 @@ Author information:
 ## Abstract
 The current study aimed to understand the developmental mechanisms regulating bud tip progenitor cells in the human fetal lung, which are present during branching morphogenesis, and to use this information to induce a bud tip progenitor-like population from human pluripotent stem cells (hPSCs) in vitro. We identified cues that maintained isolated human fetal lung epithelial bud tip progenitor cells in vitro and induced three-dimensional hPSC-derived organoids with bud tip-like domains. Bud tip-like domains could be isolated, expanded, and maintained as a nearly homogeneous population. Molecular and cellular comparisons revealed that hPSC-derived bud tip-like cells are highly similar to native lung bud tip progenitors. hPSC-derived epithelial bud tip-like structures survived in vitro for over 16 weeks, could be easily frozen and thawed, maintained multilineage potential, and successfully engrafted into the airways of immunocompromised mouse lungs, where they persisted for up to 6 weeks and gave rise to several lung epithelial lineages.
 
-DOI: [[10.1016/j.stemcr.2017.11.012]]
+DOI: [](10.1016/j.stemcr.2017.11.012)
 PMCID: PMC5770275
 PMID: 29249664 
 
